@@ -68,7 +68,7 @@ export default function App() {
     // Load initial data
     api.getEvent().then(data => setEvent(data));
     api.getSiteAssets().then(data => setSiteAssets(data));
-    setCurrentUser(api.getSavedUser());
+    api.getCurrentUser().then(setCurrentUser).catch(() => setCurrentUser(null));
 
     // Check URL routing for Admin or Scanner Agent
     const checkRoute = () => {
@@ -225,7 +225,6 @@ export default function App() {
           setPendingAuthQuantity(undefined);
           setIsAuthOpen(true);
         }}
-        onOpenAdmin={() => setIsAdminOpen(true)}
         conciergePhone={event.conciergeDisplayPhone}
       />
 
@@ -269,7 +268,6 @@ export default function App() {
       {/* 6. FOOTER */}
       <Footer
         onOpenAccount={() => setIsAccountOpen(true)}
-        onOpenAdmin={() => setIsAdminOpen(true)}
         conciergePhone={event.conciergeDisplayPhone}
       />
 
