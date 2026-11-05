@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# AI Studio chat uploads & screenshots
+**/Capture_d__cran_*.png
+**/screencapture-*.png
+
+# Base locale (données clients, admin, clés) — ne jamais versionner
+data/db.json

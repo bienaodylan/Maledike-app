@@ -1,11 +1,35 @@
-<div align="center">
+# MALEDIKE PARTY — Billetterie VIP & Expérience Officielle
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Plateforme officielle de billetterie VIP et expérience exclusive pour la soirée **MALEDIKE PARTY** à Abidjan.
 
-  <h1>Built with AI Studio</h2>
+## 🚀 Technologies
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+- **Frontend** : React 19, TypeScript, Tailwind CSS, Lucide Icons, QR Code
+- **Backend** : Node.js, Express, Supabase (PostgreSQL & Edge Functions)
+- **Paiements Sécurisés** : Intégration officielle Genius Pay (Wave, Orange Money, MTN MoMo, Moov Money, Djamo, Cartes bancaires Visa/Mastercard)
+- **Architecture de Contrôle** : Scanner d'accès temps réel, QR code crypté à usage unique, gestion des capacités et alertes
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## 🔒 Passerelle de Paiement & Opérateurs
 
-</div>
+- **Wave Mobile Money** : Universal Link instantané (`https://pay.wave.com`)
+- **Orange Money** : Portail officiel Orange CI (`https://www.orange.ci/`)
+- **MTN MoMo** : Portail officiel MTN CI (`https://www.mtn.ci/momo/`)
+- **Moov Money** : Portail officiel Moov Africa CI (`https://www.moov-africa.ci/moov-money/`)
+- **Djamo & Cartes Bancaires** : Portail officiel Djamo CI (`https://www.djamo.com/en-ci`)
+
+## 🛠️ Installation & Démarrage
+
+```bash
+# Installation des dépendances
+npm install
+
+# Démarrage du serveur de développement (Port 3000)
+npm run dev
+
+# Compilation pour la production
+npm run build
+```
+
+## 📄 Licence
+
+Tous droits réservés © 2026 MALEDIKE PARTY — Mireza Caribbean.
