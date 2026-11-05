@@ -76,10 +76,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   siteAssets,
   onEventUpdated,
   onSiteAssetsUpdated,
-  currentUser,
 }) => {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
-  const [adminPasscodeInput, setAdminPasscodeInput] = useState<string>('');
+  const [isCheckingAdmin, setIsCheckingAdmin] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
   type AdminTab = 'overview' | 'orders' | 'scanner' | 'scanner-links' | 'digital-products' | 'gateway' | 'customization';
@@ -182,10 +181,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [siteAssets]);
 
   useEffect(() => {
-    if (currentUser && currentUser.role === 'admin') {
-      setIsAdminAuthenticated(true);
+    let cancelled = false;
+
+    if (!isOpen) {
+      setIsCheckingAdmin(false);
+      setIsAdminAuthenticated(false);
+      return;
     }
-  }, [currentUser]);
+
+    setIsCheckingAdmin(true);
+    setAuthError(null);
+
+    api.getCurrentUser()
+      .then((verifiedUser) => {
+        if (cancelled) return;
+        const accountRole = (verifiedUser as (UserProfile & { accountRole?: string }) | null)?.accountRole;
+        const isFounder = accountRole === 'founder';
+        setIsAdminAuthenticated(isFounder);
+        if (!isFounder) {
+          setAuthError('Cette page est réservée au compte fondateur vérifié.');
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setIsAdminAuthenticated(false);
+        setAuthError('Session invalide. Connectez-vous avec le compte fondateur.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingAdmin(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen && isAdminAuthenticated) {
@@ -211,20 +238,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setGatewayConfig(gwData);
     } catch (err) {
       console.error('Failed to load admin data', err);
-    }
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (
-      adminPasscodeInput === 'maledike2026' ||
-      adminPasscodeInput === 'admin2026' ||
-      (currentUser && currentUser.role === 'admin')
-    ) {
-      setIsAdminAuthenticated(true);
-      setAuthError(null);
-    } else {
-      setAuthError('Code d\'accès administrateur incorrect.');
     }
   };
 
@@ -527,43 +540,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 flex flex-col">
 
         {/* AUTH GATEWAY SCREEN IF NOT LOGGED IN */}
-        {!isAdminAuthenticated ? (
+        {isCheckingAdmin ? (
+          <div className="p-8 sm:p-14 text-center max-w-md mx-auto my-auto space-y-4">
+            <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto">
+              <Lock className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-black uppercase text-white font-display">Vérification de la session</h3>
+            <p className="text-xs text-white/60">Contrôle sécurisé de votre compte auprès du serveur…</p>
+          </div>
+        ) : !isAdminAuthenticated ? (
           <div className="p-8 sm:p-14 text-center max-w-md mx-auto my-auto space-y-6">
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.3)]">
+            <div className="w-16 h-16 rounded-3xl bg-red-500/10 border border-red-500/30 text-red-300 flex items-center justify-center mx-auto">
               <Lock className="w-8 h-8" />
             </div>
             <div>
-              <h3 className="text-2xl font-black uppercase text-white font-display">
-                Accès Superviseur
-              </h3>
-              <p className="text-xs text-white/60 mt-1">
-                Espace réservé à la direction Mireza Caribbean et au staff technique MALÉDIKÉ.
+              <h3 className="text-2xl font-black uppercase text-white font-display">Accès réservé au fondateur</h3>
+              <p className="text-xs text-white/60 mt-2">
+                Connectez-vous avec l’adresse du compte fondateur. Aucun code d’accès local ne permet de contourner cette vérification.
               </p>
             </div>
-
             {authError && (
               <div className="p-3.5 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
                 <span>{authError}</span>
               </div>
             )}
-
-            <form onSubmit={handleAdminLogin} className="space-y-4">
-              <input
-                type="password"
-                placeholder="Entrez le mot de passe admin (maledike2026)"
-                value={adminPasscodeInput}
-                onChange={e => setAdminPasscodeInput(e.target.value)}
-                className="w-full bg-black/70 border border-white/20 rounded-xl px-4 py-3.5 text-center text-sm font-mono tracking-widest text-white placeholder-white/40 focus:outline-none focus:border-emerald-500"
-                autoFocus
-              />
-              <button
-                type="submit"
-                className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-sm uppercase tracking-wider cursor-pointer shadow-xl"
-              >
-                Déverrouiller le Tableau de Bord
-              </button>
-            </form>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-sm uppercase tracking-wider cursor-pointer shadow-xl"
+            >
+              Retour au site public
+            </button>
           </div>
         ) : (
           /* AUTHENTICATED TABS & VIEWS */
