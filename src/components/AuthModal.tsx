@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Lock, Mail, Phone, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
+import { motion } from 'motion/react';
+import { X, Lock, Mail, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { api } from '../services/api';
 
@@ -37,10 +37,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccessMessage(null);
     setIsLoading(true);
 
     try {
@@ -58,11 +60,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           countryCode,
         });
 
-        if (res.success && res.user) {
+        if (res.success && res.requiresEmailConfirmation) {
+          setSuccessMessage(
+            res.message || 'Compte créé. Consultez votre boîte mail pour confirmer votre adresse avant de vous connecter.'
+          );
+          setIsRegister(false);
+          setPassword('');
+        } else if (res.success && res.user) {
           onSuccess(res.user);
           onClose();
         } else {
-          setError(res.error || 'Erreur lors de l\'inscription');
+          setError(res.error || 'Erreur lors de l’inscription.');
         }
       } else {
         const res = await api.login(email.trim(), password);
@@ -70,11 +78,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onSuccess(res.user);
           onClose();
         } else {
-          setError(res.error || 'Email ou mot de passe incorrect');
+          setError(res.error || 'Email ou mot de passe incorrect.');
         }
       }
     } catch (err: any) {
-      setError(err.message || 'Une erreur est survenue');
+      setError(err.message || 'Une erreur est survenue.');
     } finally {
       setIsLoading(false);
     }
@@ -98,15 +106,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         exit={{ scale: 0.95, opacity: 0, y: 20 }}
         className="relative z-10 w-full max-w-md rounded-3xl glass-smoked border border-emerald-500/30 p-6 sm:p-8 shadow-2xl my-auto"
       >
-        {/* Close Button */}
         <button
           onClick={onClose}
           className="absolute top-5 right-5 p-2 rounded-full bg-white/10 text-white/70 hover:text-white cursor-pointer"
+          aria-label="Fermer"
         >
           <X className="w-5 h-5" />
         </button>
 
-        {/* Header */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/60 border border-emerald-500/30 text-emerald-400 text-[10px] font-black uppercase tracking-widest mb-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
@@ -122,13 +129,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </p>
         </div>
 
-        {/* Tab Switcher */}
         <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-black/60 border border-white/10 mb-6 text-xs font-bold uppercase tracking-wider">
           <button
             type="button"
             onClick={() => {
               setIsRegister(false);
               setError(null);
+              setSuccessMessage(null);
             }}
             className={`py-2 rounded-lg transition-colors cursor-pointer ${
               !isRegister ? 'bg-emerald-500 text-black font-extrabold shadow' : 'text-white/60 hover:text-white'
@@ -141,6 +148,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             onClick={() => {
               setIsRegister(true);
               setError(null);
+              setSuccessMessage(null);
             }}
             className={`py-2 rounded-lg transition-colors cursor-pointer ${
               isRegister ? 'bg-emerald-500 text-black font-extrabold shadow' : 'text-white/60 hover:text-white'
@@ -150,7 +158,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </button>
         </div>
 
-        {/* Error Notification */}
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
@@ -158,7 +165,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
-        {/* Form */}
+        {successMessage && (
+          <div className="mb-4 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-200 text-xs flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <span>{successMessage}</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           {isRegister && (
             <div className="grid grid-cols-2 gap-3">
@@ -166,32 +179,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
                   Prénom
                 </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    required
-                    placeholder="ex. Dylan"
-                    value={firstName}
-                    onChange={e => setFirstName(e.target.value)}
-                    className="w-full bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="ex. Dylan"
+                  value={firstName}
+                  onChange={e => setFirstName(e.target.value)}
+                  className="w-full bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                />
               </div>
-
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
                   Nom
                 </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    required
-                    placeholder="ex. Bienao"
-                    value={lastName}
-                    onChange={e => setLastName(e.target.value)}
-                    className="w-full bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="ex. Bienao"
+                  value={lastName}
+                  onChange={e => setLastName(e.target.value)}
+                  className="w-full bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                />
               </div>
             </div>
           )}
@@ -221,7 +229,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <input
                 type="password"
                 required
-                placeholder="••••••••"
+                minLength={8}
+                placeholder="8 caractères minimum"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 className="w-full bg-black/70 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
