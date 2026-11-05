@@ -3,11 +3,10 @@ import { ArrowUp, Phone, ShieldCheck } from 'lucide-react';
 
 interface FooterProps {
   onOpenAccount: () => void;
-  onOpenAdmin: () => void;
   conciergePhone: string;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conciergePhone }) => {
+export const Footer: React.FC<FooterProps> = ({ onOpenAccount, conciergePhone }) => {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -39,7 +38,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
               Mon Compte / Mes Billets
             </button>
             <a
-              href={`https://wa.me/2250150049489?text=${encodeURIComponent('Bonjour, demande d\'information MALEDIKE PARTY')}`}
+              href={`https://wa.me/2250150049489?text=${encodeURIComponent("Bonjour, demande d'information MALEDIKE PARTY")}`}
               target="_blank"
               rel="noreferrer"
               className="hover:text-emerald-400 transition-colors flex items-center gap-1.5"
@@ -47,12 +46,6 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
               <Phone className="w-3 h-3 text-emerald-400" />
               <span>Conciergerie Privée VIP</span>
             </a>
-            <button
-              onClick={onOpenAdmin}
-              className="hover:text-white transition-colors cursor-pointer text-white/40"
-            >
-              Admin
-            </button>
           </div>
 
           {/* Back to top */}
