@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Home, Flame, Crown, Image as ImageIcon, MapPin, User, Ticket, ShieldCheck, HelpCircle, PhoneCall, ChevronRight } from 'lucide-react';
+import { X, Home, Flame, Crown, Image as ImageIcon, MapPin, User, Ticket, HelpCircle, PhoneCall, ChevronRight } from 'lucide-react';
 import { UserProfile } from '../types';
 
 interface MobileDrawerProps {
@@ -10,7 +10,6 @@ interface MobileDrawerProps {
   onOpenBooking: () => void;
   onOpenAccount: () => void;
   onOpenAuth: () => void;
-  onOpenAdmin: () => void;
   conciergePhone: string;
 }
 
@@ -21,7 +20,6 @@ export const MobileDrawer: React.FC<MobileDrawerProps> = ({
   onOpenBooking,
   onOpenAccount,
   onOpenAuth,
-  onOpenAdmin,
   conciergePhone,
 }) => {
   const handleNavClick = (anchor: string) => {
@@ -206,17 +204,6 @@ export const MobileDrawer: React.FC<MobileDrawerProps> = ({
                 <span>RÉSERVER MON BILLET (10 000 F)</span>
               </button>
 
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenAdmin();
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/60 hover:text-white transition-colors cursor-pointer border border-white/5"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Portail Administrateur</span>
-              </button>
-
               {/* WhatsApp direct contact */}
               <a
                 href={`https://wa.me/2250150049489?text=${encodeURIComponent('Bonjour MALÉDIKÉ PARTY, je souhaite des informations sur l\'événement.')}`}
@@ -234,4 +221,3 @@ export const MobileDrawer: React.FC<MobileDrawerProps> = ({
     </AnimatePresence>
   );
 };
-
