@@ -4,8 +4,41 @@ import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
+
+// Supabase Auth: la clé service_role reste exclusivement côté serveur.
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+const supabaseAuth = SUPABASE_URL && SUPABASE_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+  : null;
+
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+  : null;
+
+type AuthenticatedRequest = express.Request & {
+  authUser?: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    whatsappNumber: string;
+    countryCode: string;
+    role: string;
+  };
+};
+
+const FOUNDER_EMAIL = 'bienaodylan428@gmail.com';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +67,79 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 }
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+
+function isPublicApiRequest(req: express.Request): boolean {
+  const path = req.path;
+  if (req.method === 'GET' && ['/event', '/site-assets', '/digital-products'].includes(path)) return true;
+  if (req.method === 'POST' && ['/auth/register', '/auth/login', '/payments/geniuspay/webhook', '/tickets/agent-scan'].includes(path)) return true;
+  if (req.method === 'GET' && path.startsWith('/scanner/verify-token/')) return true;
+  return false;
+}
+
+app.use('/api', async (req: AuthenticatedRequest, res, next) => {
+  if (isPublicApiRequest(req)) return next();
+
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      success: false,
+      error: 'Authentification indisponible : configurez SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY côté serveur.',
+    });
+  }
+
+  const authorization = req.headers.authorization || '';
+  const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!accessToken) {
+    return res.status(401).json({ success: false, error: 'Connexion requise. Veuillez vous reconnecter.' });
+  }
+
+  try {
+    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(accessToken);
+    const authUser = authData?.user;
+    if (authError || !authUser || !authUser.email) {
+      return res.status(401).json({ success: false, error: 'Session invalide ou expirée. Veuillez vous reconnecter.' });
+    }
+
+    const [{ data: profile }, { data: roleRow }] = await Promise.all([
+      supabaseAdmin.from('profiles')
+        .select('id,email,first_name,last_name,whatsapp_number,country_code')
+        .eq('id', authUser.id)
+        .maybeSingle(),
+      supabaseAdmin.from('user_roles')
+        .select('role')
+        .eq('user_id', authUser.id)
+        .maybeSingle(),
+    ]);
+
+    // L'email fondateur est aussi vérifié côté serveur; le client ne peut pas choisir son rôle.
+    const role = authUser.email.toLowerCase() === FOUNDER_EMAIL
+      ? 'founder'
+      : (roleRow?.role || 'user');
+
+    req.authUser = {
+      id: authUser.id,
+      email: authUser.email.toLowerCase(),
+      firstName: profile?.first_name || authUser.user_metadata?.firstName || '',
+      lastName: profile?.last_name || authUser.user_metadata?.lastName || '',
+      whatsappNumber: profile?.whatsapp_number || authUser.user_metadata?.whatsappNumber || '',
+      countryCode: profile?.country_code || authUser.user_metadata?.countryCode || '+225',
+      role,
+    };
+
+    const founderOnly =
+      req.path.startsWith('/admin/') ||
+      ['/event/update', '/site-assets/update', '/upload', '/tickets/scan'].includes(req.path);
+
+    if (founderOnly && role !== 'founder') {
+      return res.status(403).json({ success: false, error: 'Accès réservé au fondateur.' });
+    }
+
+    next();
+  } catch (error) {
+    console.error('[Supabase Auth] Erreur de validation de session:', error);
+    return res.status(500).json({ success: false, error: 'Impossible de vérifier votre session.' });
+  }
+});
+
 interface DatabaseSchema {
   event: {
     id: string;
@@ -60,12 +166,11 @@ interface DatabaseSchema {
   profiles: Array<{
     id: string;
     email: string;
-    passwordHash: string;
     firstName: string;
     lastName: string;
     whatsappNumber: string;
     countryCode: string;
-    role: 'user' | 'admin';
+    role: 'user' | 'admin' | 'founder';
     createdAt: string;
   }>;
   orders: Array<{
@@ -163,7 +268,13 @@ function readDb(): DatabaseSchema {
   try {
     if (fs.existsSync(DB_PATH)) {
       const data = fs.readFileSync(DB_PATH, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      // Les anciens profils locaux ne sont plus utilisés : on efface les mots de passe legacy de db.json.
+      if (Array.isArray(parsed.profiles) && parsed.profiles.length > 0) {
+        parsed.profiles = [];
+        fs.writeFileSync(DB_PATH, JSON.stringify(parsed, null, 2), 'utf-8');
+      }
+      return parsed;
     }
   } catch (err) {
     console.error('Error reading db.json:', err);
@@ -196,19 +307,7 @@ function readDb(): DatabaseSchema {
         '/assets/aistudio/gallery_vibe_01.png',
       ],
     },
-    profiles: [
-      {
-        id: 'admin_root_1',
-        email: 'bienaodylan428@gmail.com',
-        passwordHash: 'maledike2026',
-        firstName: 'Dylan',
-        lastName: 'Bienao',
-        whatsappNumber: '0150049489',
-        countryCode: '+225',
-        role: 'admin',
-        createdAt: '2026-11-01T10:00:00Z',
-      },
-    ],
+    profiles: [],
     orders: [],
     tickets: [],
     digitalProducts: [],
@@ -426,77 +525,184 @@ app.post('/api/upload', (req, res) => {
   }
 });
 
-// ----------------- 2. AUTHENTICATION -----------------
-app.post('/api/auth/register', (req, res) => {
-  db = readDb();
-  const { email, password, firstName, lastName, whatsappNumber, countryCode } = req.body;
-  if (!email || !password || !firstName || !lastName || !whatsappNumber) {
-    return res.status(400).json({ error: 'Tous les champs sont obligatoires.' });
-  }
+// ----------------- 2. AUTHENTICATION SUPABASE -----------------
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    if (!supabaseAuth || !supabaseAdmin) {
+      return res.status(503).json({ success: false, error: 'Supabase Auth n’est pas configuré sur le serveur.' });
+    }
 
-  const normalizedEmail = email.toLowerCase().trim();
-  const existing = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
-  if (existing) {
-    return res.status(400).json({ error: 'Un compte avec cette adresse email existe déjà.' });
-  }
+    const { email, password, firstName, lastName, whatsappNumber, countryCode } = req.body || {};
+    if (!email || !password || !firstName || !lastName || !whatsappNumber) {
+      return res.status(400).json({ success: false, error: 'Tous les champs sont obligatoires.' });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Le mot de passe doit contenir au moins 8 caractères.' });
+    }
 
-  const newProfile = {
-    id: 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-    email: normalizedEmail,
-    passwordHash: password,
-    firstName: firstName.trim(),
-    lastName: lastName.trim(),
-    whatsappNumber: whatsappNumber.trim(),
-    countryCode: countryCode || '+225',
-    role: (normalizedEmail === 'bienaodylan428@gmail.com' ? 'admin' : 'user') as 'user' | 'admin',
-    createdAt: new Date().toISOString(),
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const { data, error } = await supabaseAuth.auth.signUp({
+      email: normalizedEmail,
+      password: String(password),
+      options: {
+        data: {
+          firstName: String(firstName).trim(),
+          lastName: String(lastName).trim(),
+          whatsappNumber: String(whatsappNumber).trim(),
+          countryCode: String(countryCode || '+225').trim(),
+        },
+      },
+    });
+
+    if (error) {
+      const status = /already registered|already exists/i.test(error.message) ? 409 : 400;
+      return res.status(status).json({ success: false, error: error.message });
+    }
+
+    // Avec la confirmation email activée, Supabase crée le compte mais ne délivre pas encore de session.
+    if (!data.session || !data.user) {
+      return res.status(200).json({
+        success: true,
+        requiresEmailConfirmation: true,
+        message: 'Compte créé. Consultez votre boîte mail pour confirmer votre adresse avant de vous connecter.',
+      });
+    }
+
+    const { data: profile } = await supabaseAdmin.from('profiles')
+      .select('id,email,first_name,last_name,whatsapp_number,country_code')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    const { data: roleRow } = await supabaseAdmin.from('user_roles')
+      .select('role').eq('user_id', data.user.id).maybeSingle();
+
+    const user = {
+      id: data.user.id,
+      email: data.user.email,
+      firstName: profile?.first_name || String(firstName).trim(),
+      lastName: profile?.last_name || String(lastName).trim(),
+      whatsappNumber: profile?.whatsapp_number || String(whatsappNumber).trim(),
+      countryCode: profile?.country_code || String(countryCode || '+225'),
+      role: roleRow?.role === 'founder' ? 'admin' : (roleRow?.role || 'user'),
+      accountRole: roleRow?.role || 'user',
+    };
+
+    return res.json({
+      success: true,
+      user,
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      },
+    });
+  } catch (error: any) {
+    console.error('[Auth register]', error);
+    return res.status(500).json({ success: false, error: error.message || 'Erreur lors de la création du compte.' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    if (!supabaseAuth || !supabaseAdmin) {
+      return res.status(503).json({ success: false, error: 'Supabase Auth n’est pas configuré sur le serveur.' });
+    }
+
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email et mot de passe requis.' });
+    }
+
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
+      email: String(email).trim().toLowerCase(),
+      password: String(password),
+    });
+
+    if (error || !data.user || !data.session) {
+      return res.status(401).json({ success: false, error: 'Email ou mot de passe incorrect. Si vous venez de créer votre compte, confirmez d’abord votre adresse email.' });
+    }
+
+    const [{ data: profile }, { data: roleRow }] = await Promise.all([
+      supabaseAdmin.from('profiles')
+        .select('id,email,first_name,last_name,whatsapp_number,country_code')
+        .eq('id', data.user.id)
+        .maybeSingle(),
+      supabaseAdmin.from('user_roles')
+        .select('role')
+        .eq('user_id', data.user.id)
+        .maybeSingle(),
+    ]);
+
+    const accountRole = data.user.email?.toLowerCase() === FOUNDER_EMAIL
+      ? 'founder'
+      : (roleRow?.role || 'user');
+
+    const user = {
+      id: data.user.id,
+      email: data.user.email,
+      firstName: profile?.first_name || data.user.user_metadata?.firstName || '',
+      lastName: profile?.last_name || data.user.user_metadata?.lastName || '',
+      whatsappNumber: profile?.whatsapp_number || data.user.user_metadata?.whatsappNumber || '',
+      countryCode: profile?.country_code || data.user.user_metadata?.countryCode || '+225',
+      // "admin" préserve la compatibilité avec l’interface existante; accountRole contient le rôle réel.
+      role: accountRole === 'founder' ? 'admin' : accountRole,
+      accountRole,
+    };
+
+    return res.json({
+      success: true,
+      user,
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      },
+    });
+  } catch (error: any) {
+    console.error('[Auth login]', error);
+    return res.status(500).json({ success: false, error: 'Erreur lors de la connexion.' });
+  }
+});
+
+app.get('/api/auth/me', async (req: AuthenticatedRequest, res) => {
+  if (!req.authUser) return res.status(401).json({ success: false, error: 'Connexion requise.' });
+  const user = {
+    ...req.authUser,
+    role: req.authUser.role === 'founder' ? 'admin' : req.authUser.role,
+    accountRole: req.authUser.role,
   };
-
-  db.profiles.push(newProfile);
-  saveDb(db);
-  const { passwordHash: _, ...safeUser } = newProfile;
-  res.json({ success: true, user: safeUser });
+  return res.json({ success: true, user });
 });
 
-app.post('/api/auth/login', (req, res) => {
-  db = readDb();
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email et mot de passe requis.' });
+app.post('/api/auth/update-profile', async (req: AuthenticatedRequest, res) => {
+  if (!supabaseAdmin || !req.authUser) {
+    return res.status(401).json({ success: false, error: 'Connexion requise.' });
   }
 
-  const normalizedEmail = email.toLowerCase().trim();
-  const user = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
-  if (!user || user.passwordHash !== password) {
-    return res.status(401).json({ error: 'Email ou mot de passe incorrect.' });
-  }
+  const { firstName, lastName, whatsappNumber, countryCode } = req.body || {};
+  const updates: Record<string, string> = {};
+  if (typeof firstName === 'string') updates.first_name = firstName.trim();
+  if (typeof lastName === 'string') updates.last_name = lastName.trim();
+  if (typeof whatsappNumber === 'string') updates.whatsapp_number = whatsappNumber.trim();
+  if (typeof countryCode === 'string') updates.country_code = countryCode.trim();
 
-  const { passwordHash: _, ...safeUser } = user;
-  res.json({ success: true, user: safeUser });
-});
+  const { error } = await supabaseAdmin.from('profiles')
+    .update(updates).eq('id', req.authUser.id);
+  if (error) return res.status(400).json({ success: false, error: error.message });
 
-app.post('/api/auth/update-profile', (req, res) => {
-  db = readDb();
-  const { userId, firstName, lastName, whatsappNumber, countryCode } = req.body;
-  const user = db.profiles.find(p => p.id === userId);
-  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
-
-  if (firstName) user.firstName = firstName.trim();
-  if (lastName) user.lastName = lastName.trim();
-  if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
-  if (countryCode) user.countryCode = countryCode.trim();
-
-  saveDb(db);
-  const { passwordHash: _, ...safeUser } = user;
-  res.json({ success: true, user: safeUser });
+  const user = { ...req.authUser, firstName: updates.first_name ?? req.authUser.firstName,
+    lastName: updates.last_name ?? req.authUser.lastName,
+    whatsappNumber: updates.whatsapp_number ?? req.authUser.whatsappNumber,
+    countryCode: updates.country_code ?? req.authUser.countryCode };
+  return res.json({ success: true, user });
 });
 
 // ----------------- 3. ORDERS & GENIUS PAY REAL PAYMENT GATEWAY -----------------
 app.post('/api/orders/create', (req, res) => {
   db = readDb();
-  const { userId, buyerName, buyerEmail, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
+  const authUser = (req as AuthenticatedRequest).authUser;
+  const { buyerName, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
+  const userId = authUser?.id;
+  const buyerEmail = authUser?.email;
 
-  if (!userId || !quantity || quantity < 1) {
+  if (!userId || !quantity || !Number.isInteger(Number(quantity)) || Number(quantity) < 1 || Number(quantity) > 10) {
     return res.status(400).json({ error: 'Paramètres de réservation invalides.' });
   }
 
@@ -570,6 +776,9 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     const order = db.orders.find(o => o.id === orderId);
     if (!order) {
       return res.status(404).json({ error: 'Commande introuvable.' });
+    }
+    if (order.userId !== (req as AuthenticatedRequest).authUser?.id) {
+      return res.status(403).json({ error: 'Cette commande ne vous appartient pas.' });
     }
 
     if (Date.now() > order.reservationExpiresAt && order.status === 'pending') {
@@ -707,6 +916,9 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
 
   if (!order) {
     return res.status(404).json({ error: 'Commande introuvable' });
+  }
+  if (order.userId !== (req as AuthenticatedRequest).authUser?.id) {
+    return res.status(403).json({ error: 'Cette commande ne vous appartient pas.' });
   }
 
   if (order.status === 'completed') {
@@ -882,6 +1094,9 @@ app.post('/api/orders/confirm', async (req, res) => {
   if (!order) {
     return res.status(404).json({ success: false, error: 'Commande introuvable' });
   }
+  if (order.userId !== (req as AuthenticatedRequest).authUser?.id) {
+    return res.status(403).json({ success: false, error: 'Cette commande ne vous appartient pas.' });
+  }
 
   // 1. Si déjà complétée et vérifiée
   if (order.status === 'completed') {
@@ -970,15 +1185,15 @@ app.post('/api/admin/digital-products', (req, res) => {
   res.json({ success: true, product: newProd });
 });
 
-app.get('/api/digital-products/mine', (req, res) => {
-  const userId = req.query.userId as string;
-  if (!userId) return res.status(400).json({ error: 'userId requis' });
+app.get('/api/digital-products/mine', (req: AuthenticatedRequest, res) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ error: 'Connexion requise.' });
   db = readDb();
   const myPurchases = db.userDigitalPurchases.filter(p => p.userId === userId);
   res.json(myPurchases);
 });
 
-app.get('/api/digital-products/download/:purchaseId', (req, res) => {
+app.get('/api/digital-products/download/:purchaseId', (req: AuthenticatedRequest, res) => {
   const { purchaseId } = req.params;
   const token = req.query.token as string;
   db = readDb();
@@ -986,6 +1201,9 @@ app.get('/api/digital-products/download/:purchaseId', (req, res) => {
   const purchase = db.userDigitalPurchases.find(p => p.id === purchaseId);
   if (!purchase) {
     return res.status(404).send('Produit numérique non trouvé.');
+  }
+  if (purchase.userId !== req.authUser?.id) {
+    return res.status(403).send('Accès refusé à cet achat.');
   }
 
   if (purchase.downloadToken !== token) {
@@ -1243,9 +1461,9 @@ app.post('/api/admin/purge-test-data', (_req, res) => {
 });
 
 // ----------------- 8. TICKETS & USER PASSES -----------------
-app.get('/api/tickets/mine', (req, res) => {
-  const userId = req.query.userId as string;
-  if (!userId) return res.status(400).json({ error: 'User ID requis' });
+app.get('/api/tickets/mine', (req: AuthenticatedRequest, res) => {
+  const userId = req.authUser?.id;
+  if (!userId) return res.status(401).json({ error: 'Connexion requise.' });
 
   db = readDb();
   const myTickets = db.tickets.filter(t => t.userId === userId && t.status !== 'cancelled');
