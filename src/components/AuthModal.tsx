@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { X, Lock, Mail, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
@@ -22,6 +23,10 @@ const COUNTRY_CODES = [
   { code: '+1', country: 'USA', flag: '🇺🇸' },
 ];
 
+const isValidEmail = (value: string) => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
+};
+
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
@@ -39,30 +44,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (isLoading) return;
+
     setError(null);
     setSuccessMessage(null);
-    setIsLoading(true);
 
-    try {
-      if (isRegister) {
-        if (!firstName.trim() || !lastName.trim() || !whatsappNumber.trim()) {
-          throw new Error('Veuillez remplir tous les champs requis.');
-        }
+    const normalizedEmail = email.trim().toLowerCase();
 
+    // Vérification manuelle de l'adresse email.
+    if (!normalizedEmail || !isValidEmail(normalizedEmail)) {
+      setError('Veuillez saisir une adresse email valide.');
+      return;
+    }
+
+    if (!password || password.length < 8) {
+      setError('Votre mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+
+    if (isRegister) {
+      if (!firstName.trim() || !lastName.trim()) {
+        setError('Veuillez renseigner votre prénom et votre nom.');
+        return;
+      }
+
+      const normalizedPhone = whatsappNumber.replace(/\D/g, '');
+
+      if (!normalizedPhone) {
+        setError('Veuillez renseigner votre numéro WhatsApp.');
+        return;
+      }
+
+      setIsLoading(true);
+
+      try {
         const res = await api.register({
-          email: email.trim(),
+          email: normalizedEmail,
           password,
           firstName: firstName.trim(),
           lastName: lastName.trim(),
-          whatsappNumber: whatsappNumber.trim(),
+          whatsappNumber: normalizedPhone,
           countryCode,
         });
 
         if (res.success && res.requiresEmailConfirmation) {
           setSuccessMessage(
-            res.message || 'Compte créé. Consultez votre boîte mail pour confirmer votre adresse avant de vous connecter.'
+            res.message ||
+              'Compte créé. Consultez votre boîte mail pour confirmer votre adresse avant de vous connecter.'
           );
           setIsRegister(false);
           setPassword('');
@@ -70,19 +101,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onSuccess(res.user);
           onClose();
         } else {
-          setError(res.error || 'Erreur lors de l’inscription.');
+          setError(res.error || 'Impossible de créer votre compte. Veuillez réessayer.');
         }
+      } catch (err: any) {
+        setError(err?.message || 'Une erreur est survenue pendant la création du compte.');
+      } finally {
+        setIsLoading(false);
+      }
+
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const res = await api.login(normalizedEmail, password);
+
+      if (res.success && res.user) {
+        onSuccess(res.user);
+        onClose();
       } else {
-        const res = await api.login(email.trim(), password);
-        if (res.success && res.user) {
-          onSuccess(res.user);
-          onClose();
-        } else {
-          setError(res.error || 'Email ou mot de passe incorrect.');
-        }
+        setError(res.error || 'Email ou mot de passe incorrect.');
       }
     } catch (err: any) {
-      setError(err.message || 'Une erreur est survenue.');
+      setError(err?.message || 'Une erreur est survenue pendant la connexion.');
     } finally {
       setIsLoading(false);
     }
@@ -119,9 +161,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
             <span>Accès Sécurisé VIP</span>
           </div>
+
           <h3 className="text-2xl font-black uppercase text-white font-display">
             {isRegister ? 'CRÉER UN COMPTE' : 'CONNEXION CLIENT'}
           </h3>
+
           <p className="text-xs text-white/60 mt-1">
             {pendingQuantity
               ? `Authentification requise pour réserver vos ${pendingQuantity} place(s).`
@@ -138,11 +182,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               setSuccessMessage(null);
             }}
             className={`py-2 rounded-lg transition-colors cursor-pointer ${
-              !isRegister ? 'bg-emerald-500 text-black font-extrabold shadow' : 'text-white/60 hover:text-white'
+              !isRegister
+                ? 'bg-emerald-500 text-black font-extrabold shadow'
+                : 'text-white/60 hover:text-white'
             }`}
           >
             Se Connecter
           </button>
+
           <button
             type="button"
             onClick={() => {
@@ -151,7 +198,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               setSuccessMessage(null);
             }}
             className={`py-2 rounded-lg transition-colors cursor-pointer ${
-              isRegister ? 'bg-emerald-500 text-black font-extrabold shadow' : 'text-white/60 hover:text-white'
+              isRegister
+                ? 'bg-emerald-500 text-black font-extrabold shadow'
+                : 'text-white/60 hover:text-white'
             }`}
           >
             S'Inscrire
@@ -172,7 +221,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {/* noValidate désactive les blocages HTML natifs.
+            Les contrôles sont effectués dans handleSubmit. */}
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           {isRegister && (
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -181,21 +232,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  required
                   placeholder="ex. Dylan"
+                  autoComplete="given-name"
                   value={firstName}
                   onChange={e => setFirstName(e.target.value)}
                   className="w-full bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
                 />
               </div>
+
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
                   Nom
                 </label>
                 <input
                   type="text"
-                  required
                   placeholder="ex. Bienao"
+                  autoComplete="family-name"
                   value={lastName}
                   onChange={e => setLastName(e.target.value)}
                   className="w-full bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
@@ -208,15 +260,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
               Adresse Email
             </label>
+
             <div className="relative">
               <input
-                type="email"
-                required
+                type="text"
+                inputMode="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder="nom@exemple.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 className="w-full bg-black/70 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
               />
+
               <Mail className="w-4 h-4 text-white/40 absolute left-3 top-3" />
             </div>
           </div>
@@ -225,16 +282,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
               Mot de passe
             </label>
+
             <div className="relative">
               <input
                 type="password"
-                required
-                minLength={8}
+                autoComplete={isRegister ? 'new-password' : 'current-password'}
                 placeholder="8 caractères minimum"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 className="w-full bg-black/70 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
               />
+
               <Lock className="w-4 h-4 text-white/40 absolute left-3 top-3" />
             </div>
           </div>
@@ -244,6 +302,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
                 Numéro WhatsApp (Réception du Pass)
               </label>
+
               <div className="flex gap-2">
                 <select
                   value={countryCode}
@@ -256,13 +315,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     </option>
                   ))}
                 </select>
+
                 <input
                   type="tel"
-                  required
+                  inputMode="tel"
+                  autoComplete="tel-national"
                   placeholder="07 08 09 10 11"
                   value={whatsappNumber}
                   onChange={e => setWhatsappNumber(e.target.value)}
-                  className="flex-1 bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                  className="flex-1 min-w-0 bg-black/70 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
                 />
               </div>
             </div>
@@ -271,9 +332,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xl mt-4 disabled:opacity-50"
+            className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xl mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span>{isLoading ? 'Traitement en cours...' : (isRegister ? 'Créer mon compte VIP' : 'Se Connecter')}</span>
+            <span>
+              {isLoading
+                ? 'Traitement en cours...'
+                : isRegister
+                  ? 'Créer mon compte VIP'
+                  : 'Se Connecter'}
+            </span>
+
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
