@@ -22,16 +22,45 @@ const API_BASE = '/api';
 
 const STORAGE_KEYS = {
   USER: 'maledike_auth_user',
+  ACCESS_TOKEN: 'maledike_supabase_access_token',
+  REFRESH_TOKEN: 'maledike_supabase_refresh_token',
   PENDING_ORDER: 'maledike_pending_order',
   SPLASH_DISMISSED: 'maledike_splash_dismissed',
   SCANNER_TOKEN: 'maledike_agent_scanner_token',
 };
 
+
+function getAccessToken(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+  } catch {
+    return null;
+  }
+}
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json');
+  const token = getAccessToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
+
+function persistAuth(result: any): void {
+  if (result?.session?.access_token) {
+    localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, result.session.access_token);
+    if (result.session.refresh_token) {
+      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, result.session.refresh_token);
+    }
+  }
+  if (result?.user) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
+}
+
 export const api = {
   // 1. Event
   async getEvent(): Promise<EventConfig & { remainingCount: number }> {
     try {
-      const res = await fetch(`${API_BASE}/event`);
+      const res = await apiFetch(`${API_BASE}/event`);
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn('API getEvent fallback', e);
@@ -57,7 +86,7 @@ export const api = {
   },
 
   async updateEvent(updates: Partial<EventConfig>): Promise<{ success: boolean; event: EventConfig }> {
-    const res = await fetch(`${API_BASE}/event/update`, {
+    const res = await apiFetch(`${API_BASE}/event/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -68,7 +97,7 @@ export const api = {
   // 2. Site Assets
   async getSiteAssets(): Promise<SiteAssets> {
     try {
-      const res = await fetch(`${API_BASE}/site-assets`);
+      const res = await apiFetch(`${API_BASE}/site-assets`);
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn('API getSiteAssets fallback', e);
@@ -88,7 +117,7 @@ export const api = {
   },
 
   async updateSiteAssets(assets: Partial<SiteAssets>): Promise<{ success: boolean; siteAssets: SiteAssets }> {
-    const res = await fetch(`${API_BASE}/site-assets/update`, {
+    const res = await apiFetch(`${API_BASE}/site-assets/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(assets),
@@ -102,7 +131,7 @@ export const api = {
       reader.onload = async () => {
         try {
           const fileData = reader.result as string;
-          const res = await fetch(`${API_BASE}/upload`, {
+          const res = await apiFetch(`${API_BASE}/upload`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fileData, fileName: file.name }),
@@ -128,34 +157,51 @@ export const api = {
     lastName: string;
     whatsappNumber: string;
     countryCode?: string;
-  }): Promise<{ success: boolean; user?: UserProfile; error?: string }> {
-    const res = await fetch(`${API_BASE}/auth/register`, {
+  }): Promise<{ success: boolean; user?: UserProfile; error?: string; message?: string; requiresEmailConfirmation?: boolean }> {
+    const res = await apiFetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     const result = await res.json();
-    if (result.success && result.user) {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
-    }
+    if (res.ok && result.success) persistAuth(result);
     return result;
   },
 
   async login(email: string, password: string): Promise<{ success: boolean; user?: UserProfile; error?: string }> {
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const res = await apiFetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
     const result = await res.json();
-    if (result.success && result.user) {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
-    }
+    if (res.ok && result.success) persistAuth(result);
     return result;
+  },
+
+  async getCurrentUser(): Promise<UserProfile | null> {
+    const token = getAccessToken();
+    if (!token) return null;
+    try {
+      const res = await apiFetch(`${API_BASE}/auth/me`);
+      if (!res.ok) {
+        this.logoutUser();
+        return null;
+      }
+      const result = await res.json();
+      if (result.success && result.user) {
+        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
+        return result.user as UserProfile;
+      }
+    } catch (error) {
+      console.warn('Impossible de restaurer la session Supabase', error);
+    }
+    return null;
   },
 
   getSavedUser(): UserProfile | null {
     try {
+      if (!getAccessToken()) return null;
       const data = localStorage.getItem(STORAGE_KEYS.USER);
       return data ? JSON.parse(data) : null;
     } catch {
@@ -165,13 +211,15 @@ export const api = {
 
   logoutUser(): void {
     localStorage.removeItem(STORAGE_KEYS.USER);
+    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
   },
 
-  async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {
-    const res = await fetch(`${API_BASE}/auth/update-profile`, {
+  async updateProfile(_userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {
+    const res = await apiFetch(`${API_BASE}/auth/update-profile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, ...data }),
+      body: JSON.stringify(data),
     });
     const result = await res.json();
     if (result.success && result.user) {
@@ -192,7 +240,7 @@ export const api = {
     category?: TicketCategory;
     categoryName?: string;
   }): Promise<{ success: boolean; order?: Order; error?: string; geniusPayPublicKey?: string; env?: string }> {
-    const res = await fetch(`${API_BASE}/orders/create`, {
+    const res = await apiFetch(`${API_BASE}/orders/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -206,7 +254,7 @@ export const api = {
     paymentPhone: string;
     countryCode: string;
   }): Promise<{ success: boolean; session?: any; checkoutUrl?: string; error?: string }> {
-    const res = await fetch(`${API_BASE}/payments/geniuspay/initiate`, {
+    const res = await apiFetch(`${API_BASE}/payments/geniuspay/initiate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -221,7 +269,7 @@ export const api = {
     digitalPurchases?: UserDigitalPurchase[];
     expiresInSeconds?: number;
   }> {
-    const res = await fetch(`${API_BASE}/payments/status/${encodeURIComponent(orderId)}`);
+    const res = await apiFetch(`${API_BASE}/payments/status/${encodeURIComponent(orderId)}`);
     return res.json();
   },
 
@@ -232,7 +280,7 @@ export const api = {
     digitalPurchases?: UserDigitalPurchase[];
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE}/orders/confirm`, {
+    const res = await apiFetch(`${API_BASE}/orders/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderId, transactionId }),
@@ -243,7 +291,7 @@ export const api = {
   // 5. Digital Products
   async getDigitalProducts(): Promise<DigitalProduct[]> {
     try {
-      const res = await fetch(`${API_BASE}/digital-products`);
+      const res = await apiFetch(`${API_BASE}/digital-products`);
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn('API getDigitalProducts fallback', e);
@@ -252,7 +300,7 @@ export const api = {
   },
 
   async createDigitalProduct(data: Partial<DigitalProduct>): Promise<{ success: boolean; product?: DigitalProduct }> {
-    const res = await fetch(`${API_BASE}/admin/digital-products`, {
+    const res = await apiFetch(`${API_BASE}/admin/digital-products`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -262,7 +310,7 @@ export const api = {
 
   async getMyDigitalPurchases(userId: string): Promise<UserDigitalPurchase[]> {
     try {
-      const res = await fetch(`${API_BASE}/digital-products/mine?userId=${encodeURIComponent(userId)}`);
+      const res = await apiFetch(`${API_BASE}/digital-products/mine?userId=${encodeURIComponent(userId)}`);
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn('API getMyDigitalPurchases fallback', e);
@@ -276,12 +324,12 @@ export const api = {
     secretLocationRevealed: boolean;
     secretLocationAddress: string | null;
   }> {
-    const res = await fetch(`${API_BASE}/tickets/mine?userId=${encodeURIComponent(userId)}`);
+    const res = await apiFetch(`${API_BASE}/tickets/mine?userId=${encodeURIComponent(userId)}`);
     return res.json();
   },
 
   async scanTicket(qrTokenHash: string): Promise<CheckInResult> {
-    const res = await fetch(`${API_BASE}/tickets/scan`, {
+    const res = await apiFetch(`${API_BASE}/tickets/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ qrTokenHash }),
@@ -291,12 +339,12 @@ export const api = {
 
   // 7. Scanner Access Tokens
   async getScannerTokens(): Promise<ScannerToken[]> {
-    const res = await fetch(`${API_BASE}/admin/scanner-tokens`);
+    const res = await apiFetch(`${API_BASE}/admin/scanner-tokens`);
     return res.json();
   },
 
   async createScannerToken(agentName: string, gateName?: string): Promise<{ success: boolean; scannerToken?: ScannerToken }> {
-    const res = await fetch(`${API_BASE}/admin/scanner-tokens`, {
+    const res = await apiFetch(`${API_BASE}/admin/scanner-tokens`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentName, gateName }),
@@ -305,7 +353,7 @@ export const api = {
   },
 
   async revokeScannerToken(tokenId: string): Promise<{ success: boolean }> {
-    const res = await fetch(`${API_BASE}/admin/scanner-tokens/revoke`, {
+    const res = await apiFetch(`${API_BASE}/admin/scanner-tokens/revoke`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tokenId }),
@@ -323,12 +371,12 @@ export const api = {
     message?: string;
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE}/scanner/verify-token/${encodeURIComponent(token)}`);
+    const res = await apiFetch(`${API_BASE}/scanner/verify-token/${encodeURIComponent(token)}`);
     return res.json();
   },
 
   async agentScanTicket(qrTokenHash: string, scannerToken: string): Promise<CheckInResult> {
-    const res = await fetch(`${API_BASE}/tickets/agent-scan`, {
+    const res = await apiFetch(`${API_BASE}/tickets/agent-scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ qrTokenHash, scannerToken }),
@@ -350,22 +398,22 @@ export const api = {
     operatorData: OperatorSalesData[];
     recentOrders: Order[];
   }> {
-    const res = await fetch(`${API_BASE}/admin/analytics`);
+    const res = await apiFetch(`${API_BASE}/admin/analytics`);
     return res.json();
   },
 
   async getAdminOrders(): Promise<Order[]> {
-    const res = await fetch(`${API_BASE}/admin/orders`);
+    const res = await apiFetch(`${API_BASE}/admin/orders`);
     return res.json();
   },
 
   async getAdminTickets(): Promise<Ticket[]> {
-    const res = await fetch(`${API_BASE}/admin/tickets`);
+    const res = await apiFetch(`${API_BASE}/admin/tickets`);
     return res.json();
   },
 
   async cancelTicket(ticketId: string): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await fetch(`${API_BASE}/admin/tickets/cancel`, {
+    const res = await apiFetch(`${API_BASE}/admin/tickets/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticketId }),
@@ -379,12 +427,12 @@ export const api = {
     secretKeyMasked: string;
     webhookSecretConfigured: boolean;
   }> {
-    const res = await fetch(`${API_BASE}/admin/gateway-config`);
+    const res = await apiFetch(`${API_BASE}/admin/gateway-config`);
     return res.json();
   },
 
   async updateGatewayConfig(config: Partial<GatewayConfig>): Promise<{ success: boolean; gatewayConfig?: GatewayConfig }> {
-    const res = await fetch(`${API_BASE}/admin/gateway-config`, {
+    const res = await apiFetch(`${API_BASE}/admin/gateway-config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
@@ -393,7 +441,7 @@ export const api = {
   },
 
   async purgeTestData(): Promise<{ success: boolean; purgedCount: number; remainingTickets: number }> {
-    const res = await fetch(`${API_BASE}/admin/purge-test-data`, {
+    const res = await apiFetch(`${API_BASE}/admin/purge-test-data`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
