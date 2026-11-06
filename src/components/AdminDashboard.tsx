@@ -182,7 +182,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [siteAssets]);
 
   useEffect(() => {
-    if (currentUser?.email?.trim().toLowerCase() === 'bienaodylan428@gmail.com' && currentUser.role === 'admin') {
+    if (currentUser?.email?.trim().toLowerCase() === 'bienaodylan428@gmail.com' && (currentUser.role === 'admin' || currentUser.role === 'founder')) {
       setIsAdminAuthenticated(true);
     } else {
       setIsAdminAuthenticated(false);
@@ -219,7 +219,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
     // Accès réservé au compte fondateur / admin (rôle issu de la table user_roles). Aucun code en dur.
-    if (currentUser && currentUser.role === 'admin') {
+    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'founder')) {
       setIsAdminAuthenticated(true);
       setAuthError(null);
     } else {
