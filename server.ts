@@ -200,19 +200,7 @@ function readDb(): DatabaseSchema {
         '/assets/aistudio/gallery_vibe_01.png',
       ],
     },
-    profiles: [
-      {
-        id: 'admin_root_1',
-        email: 'bienaodylan428@gmail.com',
-        passwordHash: 'maledike2026',
-        firstName: 'Dylan',
-        lastName: 'Bienao',
-        whatsappNumber: '0150049489',
-        countryCode: '+225',
-        role: 'admin',
-        createdAt: '2026-11-01T10:00:00Z',
-      },
-    ],
+    profiles: [],
     orders: [],
     tickets: [],
     digitalProducts: [],
@@ -470,31 +458,9 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  let user = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
+  const user = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
 
-  // Ensure Dylan's root account is always active with admin role
-  if (normalizedEmail === 'bienaodylan428@gmail.com') {
-    if (!user) {
-      user = {
-        id: 'admin_root_1',
-        email: 'bienaodylan428@gmail.com',
-        passwordHash: 'maledike2026',
-        firstName: 'Dylan',
-        lastName: 'Bienao',
-        whatsappNumber: '0150049489',
-        countryCode: '+225',
-        role: 'admin',
-        createdAt: new Date().toISOString(),
-      };
-      db.profiles.push(user);
-      saveDb(db);
-    } else {
-      user.role = 'admin';
-      saveDb(db);
-    }
-  }
-
-  const isPasswordValid = user && (user.passwordHash === password || (normalizedEmail === 'bienaodylan428@gmail.com' && password === 'maledike2026'));
+  const isPasswordValid = user && user.passwordHash === password;
   if (!user || !isPasswordValid) {
     return res.status(401).json({ error: 'Email ou mot de passe incorrect.' });
   }

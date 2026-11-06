@@ -26,19 +26,7 @@
       "/assets/aistudio/gallery_vibe_01.png"
     ]
   },
-  "profiles": [
-    {
-      "id": "admin_root_1",
-      "email": "bienaodylan428@gmail.com",
-      "passwordHash": "maledike2026",
-      "firstName": "Dylan",
-      "lastName": "Bienao",
-      "whatsappNumber": "0150049489",
-      "countryCode": "+225",
-      "role": "admin",
-      "createdAt": "2026-11-01T10:00:00Z"
-    }
-  ],
+  "profiles": [],
   "orders": [],
   "tickets": [],
   "digitalProducts": [

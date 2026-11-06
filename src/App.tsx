@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './services/api';
+import { supabase } from './services/supabase';
 import { EventConfig, SiteAssets, UserProfile, TicketCategory } from './types';
 import { Navbar } from './components/Navbar';
 import { MobileDrawer } from './components/MobileDrawer';
@@ -67,7 +68,13 @@ export default function App() {
     // Load initial data
     api.getEvent().then(data => setEvent(data));
     api.getSiteAssets().then(data => setSiteAssets(data));
+    // Affichage immédiat depuis le cache, puis validation de la vraie session Supabase
     setCurrentUser(api.getSavedUser());
+    api.restoreSession().then(user => setCurrentUser(user));
+    const { data: authListener } = supabase.auth.onAuthStateChange(event => {
+      // Pas d'appel Supabase ici (risque de blocage) : on réagit uniquement à la déconnexion
+      if (event === 'SIGNED_OUT') setCurrentUser(null);
+    });
 
     // Check URL routing for Admin or Scanner Agent
     const checkRoute = () => {
@@ -105,6 +112,7 @@ export default function App() {
     return () => {
       window.removeEventListener('hashchange', checkRoute);
       window.removeEventListener('popstate', checkRoute);
+      authListener.subscription.unsubscribe();
     };
   }, []);
 
