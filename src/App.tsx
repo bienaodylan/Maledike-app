@@ -169,7 +169,7 @@ export default function App() {
 
   // Standalone Full-Page Admin Dashboard (Page dédiée et non bloc modal)
   if (isAdminOpen) {
-    if (!currentUser || currentUser.email?.trim().toLowerCase() !== 'bienaodylan428@gmail.com' || currentUser.role !== 'admin') {
+    if (!currentUser || currentUser.email?.trim().toLowerCase() !== 'bienaodylan428@gmail.com' || currentUser.role !== 'admin' && currentUser.role !== 'founder') {
       return (
         <div className="min-h-screen flex items-center justify-center bg-[#0a0710] text-white p-6">
           <div className="max-w-md text-center rounded-2xl border border-white/10 bg-white/5 p-8">
