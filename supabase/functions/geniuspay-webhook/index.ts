@@ -26,8 +26,9 @@ serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    // 1. Webhook Signature Verification (HMAC-SHA256)
-    if (signature && GENIUSPAY_SECRET_KEY) {
+    // 1. Webhook Signature Verification (HMAC-SHA256) — mandatory
+    if (!signature || !GENIUSPAY_SECRET_KEY) return new Response("Signature Required", { status: 401 });
+    {
       const key = await crypto.subtle.importKey(
         "raw",
         new TextEncoder().encode(GENIUSPAY_SECRET_KEY),
@@ -77,6 +78,13 @@ serve(async (req) => {
     // Idempotency: If already completed, do not issue duplicate tickets
     if (order.status === "completed") {
       return new Response(JSON.stringify({ message: "Order already fulfilled" }), { status: 200 });
+    }
+
+    // Reject amount mismatches before issuing tickets
+    const paidAmount = Number(data?.amount ?? data?.paid_amount ?? order.total_amount);
+    if (Number.isFinite(paidAmount) && paidAmount !== Number(order.total_amount)) {
+      console.error("Payment amount mismatch", orderId);
+      return new Response(JSON.stringify({ error: "Payment amount mismatch" }), { status: 400 });
     }
 
     // 3. Mark Order as Completed
