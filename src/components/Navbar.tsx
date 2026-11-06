@@ -61,15 +61,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Actions & Profile */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Admin shortcut button (desktop/tablet only) */}
-          <button
-            onClick={onOpenAdmin}
-            title="Panneau d'Administration"
-            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white/70 hover:text-white transition-all cursor-pointer"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Admin</span>
-          </button>
+          {/* Admin shortcut button (only shown when administrator is logged in) */}
+          {currentUser && (currentUser.role === 'admin' || currentUser.email?.toLowerCase() === 'bienaodylan428@gmail.com') && (
+            <button
+              onClick={onOpenAdmin}
+              title="Panneau d'Administration"
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-xs font-semibold text-emerald-300 hover:text-emerald-200 transition-all cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Admin</span>
+            </button>
+          )}
 
           {/* User Account / Login (desktop only - mobile accessible inside drawer) */}
           {currentUser ? (

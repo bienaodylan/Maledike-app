@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS public.orders (
   checkout_url TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
   reservation_expires_at TIMESTAMPTZ NOT NULL,
+  category TEXT DEFAULT 'pass_vip',
+  category_name TEXT DEFAULT 'Pass VIP Unique',
   digital_product_ids JSONB DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   completed_at TIMESTAMPTZ
@@ -84,6 +86,8 @@ CREATE TABLE IF NOT EXISTS public.tickets (
   event_date TEXT NOT NULL DEFAULT 'Samedi 28 Novembre 2026',
   event_time TEXT NOT NULL DEFAULT '23H00 — 06H00',
   price INTEGER NOT NULL DEFAULT 10000,
+  category TEXT DEFAULT 'pass_vip',
+  category_name TEXT DEFAULT 'Pass VIP Unique',
   qr_token_hash TEXT UNIQUE NOT NULL,
   status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'checked_in', 'cancelled')),
   created_at TIMESTAMPTZ DEFAULT NOW(),

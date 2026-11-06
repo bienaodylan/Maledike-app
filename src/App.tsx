@@ -268,6 +268,7 @@ export default function App() {
 
       {/* 6. FOOTER */}
       <Footer
+        currentUser={currentUser}
         onOpenAccount={() => setIsAccountOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
         conciergePhone={event.conciergeDisplayPhone}

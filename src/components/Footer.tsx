@@ -1,13 +1,16 @@
 import React from 'react';
 import { ArrowUp, Phone, ShieldCheck } from 'lucide-react';
 
+import { UserProfile } from '../types';
+
 interface FooterProps {
   onOpenAccount: () => void;
   onOpenAdmin: () => void;
   conciergePhone: string;
+  currentUser?: UserProfile | null;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conciergePhone }) => {
+export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conciergePhone, currentUser }) => {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -47,12 +50,14 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
               <Phone className="w-3 h-3 text-emerald-400" />
               <span>Conciergerie Privée VIP</span>
             </a>
-            <button
-              onClick={onOpenAdmin}
-              className="hover:text-white transition-colors cursor-pointer text-white/40"
-            >
-              Admin
-            </button>
+            {currentUser && (currentUser.role === 'admin' || currentUser.email?.toLowerCase() === 'bienaodylan428@gmail.com') && (
+              <button
+                onClick={onOpenAdmin}
+                className="hover:text-emerald-400 transition-colors cursor-pointer text-emerald-400 font-extrabold"
+              >
+                Portail Admin
+              </button>
+            )}
           </div>
 
           {/* Back to top */}

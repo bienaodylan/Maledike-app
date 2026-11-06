@@ -57,12 +57,52 @@ export const AgentScannerView: React.FC<AgentScannerViewProps> = ({
       attendeeName: string;
       ticketNumber: string;
       status: string;
+      note?: string;
     }>
   >([]);
 
+  // Sound synthesis for instant acoustic feedback
+  const playBeep = (type: 'success' | 'duplicate' | 'error') => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'success') {
+        // Crisp dual chime
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      } else if (type === 'duplicate') {
+        // Heavy buzzing warning
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, ctx.currentTime);
+        osc.frequency.setValueAtTime(160, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.35, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.45);
+      } else {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, ctx.currentTime);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      }
+    } catch {}
+  };
+
   // 1. Validate scanner token upon mount or change
   useEffect(() => {
-    // Extract token from query params if not provided
     const urlParams = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const activeToken = token || urlParams.get('token') || hashParams.get('token') || '';
@@ -84,6 +124,21 @@ export const AgentScannerView: React.FC<AgentScannerViewProps> = ({
       const res = await api.verifyScannerToken(tok);
       if (res.valid && res.tokenInfo) {
         setTokenInfo(res.tokenInfo);
+        // Load existing audit history for this scanner
+        api.getScannerHistory(tok).then(logs => {
+          if (Array.isArray(logs) && logs.length > 0) {
+            const mapped = logs.map(l => ({
+              id: l.id,
+              time: new Date(l.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              success: l.action === 'TICKET_CHECKED_IN',
+              attendeeName: l.details?.attendeeName || 'Visiteur VIP',
+              ticketNumber: l.details?.ticketNumber || l.details?.rawInput || 'MLDK',
+              status: l.action === 'TICKET_CHECKED_IN' ? 'VALIDÉ' : l.action === 'DUPLICATE_SCAN_REJECTED' ? 'DOUBLON REFUSÉ' : 'REFUSÉ',
+              note: l.details?.alreadyCheckedInAt ? `Déjà scanné à ${new Date(l.details.alreadyCheckedInAt).toLocaleTimeString('fr-FR')}` : undefined,
+            }));
+            setRecentScans(mapped);
+          }
+        });
       } else {
         setTokenError(res.message || 'Jeton de filtrage révoqué ou expiré.');
       }
@@ -140,31 +195,50 @@ export const AgentScannerView: React.FC<AgentScannerViewProps> = ({
 
     try {
       const res = await api.agentScanTicket(rawCode, token);
-
       setScanResult(res);
 
-      const scannedTicket = res.ticket;
-      if (scannedTicket) {
+      if (res.success) {
+        playBeep('success');
+        const scannedTicket = res.ticket;
         setRecentScans(prev => [
           {
             id: 'scan_' + Date.now(),
             time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            success: res.success,
-            attendeeName: scannedTicket.attendeeName || 'Visiteur VIP',
-            ticketNumber: scannedTicket.ticketNumber || rawCode.slice(0, 14),
-            status: res.success ? 'VALIDÉ' : res.error || 'REFUSÉ',
+            success: true,
+            attendeeName: scannedTicket?.attendeeName || 'Visiteur VIP',
+            ticketNumber: scannedTicket?.ticketNumber || rawCode.slice(0, 14),
+            status: 'VALIDÉ',
           },
-          ...prev.slice(0, 9),
+          ...prev.slice(0, 19),
+        ]);
+        setManualCode('');
+      } else {
+        const isDuplicate = res.error === 'ALREADY_USED';
+        if (isDuplicate) {
+          playBeep('duplicate');
+        } else {
+          playBeep('error');
+        }
+
+        const scannedTicket = res.ticket;
+        setRecentScans(prev => [
+          {
+            id: 'scan_' + Date.now(),
+            time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            success: false,
+            attendeeName: scannedTicket?.attendeeName || 'Inconnu',
+            ticketNumber: scannedTicket?.ticketNumber || rawCode.slice(0, 14),
+            status: isDuplicate ? 'DOUBLON REFUSÉ' : 'REFUSÉ',
+            note: res.alreadyCheckedInAt ? `Déjà scanné à ${new Date(res.alreadyCheckedInAt).toLocaleTimeString('fr-FR')}` : undefined,
+          },
+          ...prev.slice(0, 19),
         ]);
       }
-
-      if (res.success) {
-        setManualCode('');
-      }
     } catch (err: any) {
+      playBeep('error');
       setScanResult({
         success: false,
-        message: err.message || 'Erreur lors du scan du billet.',
+        message: err.message || 'Erreur de connexion au serveur.',
         error: 'NETWORK_ERROR',
       });
     } finally {
@@ -415,15 +489,26 @@ export const AgentScannerView: React.FC<AgentScannerViewProps> = ({
               {recentScans.map(s => (
                 <div
                   key={s.id}
-                  className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between text-xs"
+                  className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                    s.success
+                      ? 'bg-emerald-950/20 border-emerald-500/20'
+                      : s.status.includes('DOUBLON')
+                      ? 'bg-red-950/40 border-red-500/40 shadow-[0_0_15px_rgba(239,68,68,0.2)]'
+                      : 'bg-white/5 border-white/10'
+                  }`}
                 >
                   <div>
                     <span className="font-bold text-white block">{s.attendeeName}</span>
                     <span className="text-[10px] text-white/50 font-mono">{s.ticketNumber} • {s.time}</span>
+                    {s.note && (
+                      <span className="text-[10px] text-red-400 font-semibold block mt-0.5">{s.note}</span>
+                    )}
                   </div>
                   <span
                     className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                      s.success ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                      s.success
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-red-500/20 text-red-300 border border-red-500/30'
                     }`}
                   >
                     {s.status}

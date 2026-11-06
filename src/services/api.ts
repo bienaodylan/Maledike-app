@@ -336,6 +336,16 @@ export const api = {
     return res.json();
   },
 
+  async getScannerHistory(token: string): Promise<any[]> {
+    try {
+      const res = await fetch(`${API_BASE}/scanner/history/${encodeURIComponent(token)}`);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('getScannerHistory error', e);
+    }
+    return [];
+  },
+
   // 8. Analytics & Admin
   async getAnalytics(): Promise<{
     totalRevenueFcfa: number;
