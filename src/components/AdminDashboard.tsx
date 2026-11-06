@@ -182,8 +182,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [siteAssets]);
 
   useEffect(() => {
-    if (currentUser && currentUser.role === 'admin') {
+    if (currentUser?.email?.trim().toLowerCase() === 'bienaodylan428@gmail.com' && currentUser.role === 'admin') {
       setIsAdminAuthenticated(true);
+    } else {
+      setIsAdminAuthenticated(false);
     }
   }, [currentUser]);
 
