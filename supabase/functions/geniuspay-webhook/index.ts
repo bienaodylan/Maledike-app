@@ -23,15 +23,16 @@ serve(async (req) => {
     const rawBody = await req.text();
     const signature = req.headers.get("x-geniuspay-signature") || "";
     const GENIUSPAY_SECRET_KEY = Deno.env.get("GENIUSPAY_SECRET_KEY") || "";
+    const GENIUSPAY_WEBHOOK_SECRET = Deno.env.get("GENIUSPAY_WEBHOOK_SECRET") || GENIUSPAY_SECRET_KEY;
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
     // 1. Webhook Signature Verification (HMAC-SHA256) — mandatory
-    if (!signature || !GENIUSPAY_SECRET_KEY) return new Response("Signature Required", { status: 401 });
+    if (!signature || !GENIUSPAY_WEBHOOK_SECRET) return new Response("Signature Required", { status: 401 });
     {
       const key = await crypto.subtle.importKey(
         "raw",
-        new TextEncoder().encode(GENIUSPAY_SECRET_KEY),
+        new TextEncoder().encode(GENIUSPAY_WEBHOOK_SECRET),
         { name: "HMAC", hash: "SHA-256" },
         false,
         ["sign"]
