@@ -548,22 +548,22 @@ export const api = {
   },
 
   async agentScanTicket(qrTokenHash: string, scannerToken: string): Promise<CheckInResult> {
-    const res = await fetch(`${API_BASE}/tickets/agent-scan`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qrTokenHash, scannerToken }),
+    const { data, error } = await supabase.rpc('maledike_agent_scan', {
+      p_code: qrTokenHash.trim(), p_scanner_token: scannerToken,
     });
-    return parseJson(res);
+    if (error) throw new Error(error.message || 'Erreur de validation du billet');
+    return data as CheckInResult;
   },
 
   async getScannerHistory(token: string): Promise<any[]> {
     try {
-      const res = await fetch(`${API_BASE}/scanner/history/${encodeURIComponent(token)}`);
-      if (res.ok) return await res.json();
+      const { data, error } = await supabase.rpc('maledike_scanner_history', { p_scanner_token: token });
+      if (error || !Array.isArray(data)) return [];
+      return data;
     } catch (e) {
       console.warn('getScannerHistory error', e);
+      return [];
     }
-    return [];
   },
 
   // 8. Analytics & Admin
