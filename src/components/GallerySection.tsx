@@ -32,7 +32,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ images }) => {
               viewport={{ once: true }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
               onClick={() => setActiveImage(imgUrl)}
-              className="relative aspect-square sm:aspect-[4/5] rounded-2xl overflow-hidden glass-smoked border border-white/10 group cursor-pointer shadow-lg hover:border-emerald-500/40 transition-all duration-300"
+              className="relative aspect-square rounded-2xl overflow-hidden glass-smoked border border-white/10 group cursor-pointer shadow-lg hover:border-emerald-500/40 transition-all duration-300"
             >
               <img
                 src={imgUrl}
