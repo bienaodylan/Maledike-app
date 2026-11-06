@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Lock, Mail, Phone, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
 import { UserProfile } from '../types';
 import { api } from '../services/api';
+import { supabase } from '../services/supabase';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -31,12 +32,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [countryCode, setCountryCode] = useState('+225');
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleForgotPassword = async () => {
+    setError(null);
+    if (!email.trim()) { setError('Saisissez votre adresse email pour recevoir le lien de réinitialisation.'); return; }
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      setError('Si un compte existe pour cette adresse, un email de réinitialisation vient d’être envoyé. Vérifiez aussi vos courriers indésirables.');
+    } catch (err: any) { setError(err.message || 'Impossible d’envoyer le lien. Réessayez.'); }
+    finally { setIsLoading(false); }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,7 +130,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <span>Accès Sécurisé VIP</span>
           </div>
           <h3 className="text-2xl font-black uppercase text-white font-display">
-            {isRegister ? 'CRÉER UN COMPTE' : 'CONNEXION CLIENT'}
+            {isForgotPassword ? 'MOT DE PASSE OUBLIÉ' : isRegister ? 'CRÉER UN COMPTE' : 'CONNEXION CLIENT'}
           </h3>
           <p className="text-xs text-white/60 mt-1">
             {pendingQuantity
@@ -123,6 +140,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Tab Switcher */}
+        {!isForgotPassword && (
         <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-black/60 border border-white/10 mb-6 text-xs font-bold uppercase tracking-wider">
           <button
             type="button"
@@ -150,6 +168,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </button>
         </div>
 
+        )}
         {/* Error Notification */}
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
@@ -159,8 +178,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {isRegister && (
+        <form onSubmit={isForgotPassword ? (e => { e.preventDefault(); handleForgotPassword(); }) : handleSubmit} className="space-y-4">
+          {!isForgotPassword && isRegister && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
@@ -213,13 +232,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           </div>
 
-          <div>
+          {!isForgotPassword && <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
               Mot de passe
             </label>
             <div className="relative">
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 required
                 placeholder="••••••••"
                 value={password}
@@ -227,10 +246,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 className="w-full bg-black/70 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
               />
               <Lock className="w-4 h-4 text-white/40 absolute left-3 top-3" />
+              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-2.5 text-[10px] text-emerald-300 font-bold" aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}>{showPassword ? "Masquer" : "Afficher"}</button>
             </div>
-          </div>
+          </div>}
 
-          {isRegister && (
+          {!isForgotPassword && isRegister && (
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-white/70 mb-1">
                 Numéro WhatsApp (Réception du Pass)
@@ -259,6 +279,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
+          {!isRegister && !isForgotPassword && <button type="button" onClick={() => { setIsForgotPassword(true); setError(null); }} className="text-xs text-emerald-300 hover:text-emerald-200 underline underline-offset-4">Mot de passe oublié ?</button>}
+          {isForgotPassword && <button type="button" onClick={() => { setIsForgotPassword(false); setError(null); }} className="text-xs text-white/60 underline">Retour à la connexion</button>}
           <button
             type="submit"
             disabled={isLoading}
