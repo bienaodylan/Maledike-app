@@ -6,8 +6,8 @@ Deno.serve(async(req)=>{
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors});
  if(req.method!=="POST")return json({success:false,error:"Méthode non autorisée"},405);
  try{
-  const url=Deno.env.get("SUPABASE_URL")!,anon=Deno.env.get("SUPABASE_ANON_KEY")||Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!,service=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,secret=Deno.env.get("GENIUSPAY_SECRET_KEY");
-  if(!secret)return json({success:false,error:"Paiement indisponible : la clé secrète GeniusPay n'est pas configurée côté Supabase."},503);
+  const url=Deno.env.get("SUPABASE_URL")!,anon=Deno.env.get("SUPABASE_ANON_KEY")||Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!,service=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,secret=Deno.env.get("GENIUSPAY_SECRET_KEY"),publicKey=Deno.env.get("GENIUSPAY_PUBLIC_KEY");
+  if(!secret||!publicKey)return json({success:false,error:"GeniusPay incomplet : ajoutez GENIUSPAY_PUBLIC_KEY (pk_live_...) et GENIUSPAY_SECRET_KEY (sk_live_...) dans Supabase."},503);
   const auth=req.headers.get("Authorization")||"",userClient=createClient(url,anon,{global:{headers:{Authorization:auth}}});
   const {data:{user},error:uerr}=await userClient.auth.getUser();if(uerr||!user)return json({success:false,error:"Session expirée. Reconnectez-vous."},401);
   const db=createClient(url,service),body=await req.json(),orderId=String(body.orderId||"");
@@ -20,13 +20,15 @@ Deno.serve(async(req)=>{
   const allowed=["wave","orange_money","mtn_momo","moov_money","djamo_card"];if(!allowed.includes(body.paymentMethod))return json({success:false,error:"Moyen de paiement non reconnu."},400);
   const phone=(String(body.countryCode||order.country_code||"+225")+String(body.paymentPhone).replace(/\s+/g,"")).replace(/[^+\d]/g,"");
   const reference="MLDK_"+Date.now()+"_"+crypto.randomUUID().slice(0,8).toUpperCase();
-  const payload={amount:order.total_amount,currency:"XOF",reference,customer:{name:order.buyer_name,email:order.buyer_email,phone},payment_method:body.paymentMethod,metadata:{orderId:order.id,userId:order.user_id,quantity:order.quantity,event:"MALEDIKE PARTY 2026"},return_url:(Deno.env.get("APP_URL")||"https://maledike-app.vercel.app")+"/?payment=return&orderId="+order.id,webhook_url:url+"/functions/v1/geniuspay-webhook"};
-  const response=await fetch("https://api.geniuspay.com/v1/payments",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const payload={amount:Number(order.total_amount),currency:"XOF",description:"Billets MALEDIKE PARTY 2026 - "+orderId,reference,customer:{name:order.buyer_name,email:order.buyer_email,phone},payment_method:body.paymentMethod,metadata:{order_id:order.id,user_id:order.user_id,quantity:String(order.quantity),event:"MALEDIKE PARTY 2026"},success_url:"https://maledike-app.vercel.app/?payment=return&orderId="+order.id,error_url:"https://maledike-app.vercel.app/?payment=error&orderId="+order.id};
+  const response=await fetch("https://geniuspay.ci/api/v1/merchant/payments",{method:"POST",headers:{"X-API-Key":publicKey,"X-API-Secret":secret,"Content-Type":"application/json"},body:JSON.stringify(payload)});
   const gateway=await response.json().catch(()=>({}));
-  if(!response.ok){console.error("GeniusPay rejected",response.status,gateway);return json({success:false,error:gateway?.message||gateway?.error||"GeniusPay a refusé la création du paiement (HTTP "+response.status+")."},502);}
-  const checkoutUrl=gateway.checkout_url||gateway.checkoutUrl||gateway.url||gateway.data?.checkout_url||gateway.data?.checkoutUrl||gateway.data?.url||gateway.payment?.checkout_url;
-  if(typeof checkoutUrl!=="string"||!checkoutUrl.startsWith("https://")){console.error("GeniusPay response without checkout URL",gateway);return json({success:false,error:"GeniusPay n'a pas fourni de lien de paiement. Vérifiez la configuration/API GeniusPay."},502);}
-  await db.from("orders").update({payment_method:body.paymentMethod,payment_phone:phone,transaction_reference:gateway.reference||reference,checkout_url:checkoutUrl}).eq("id",orderId);
-  return json({success:true,checkoutUrl,session:{transactionId:gateway.reference||reference,checkoutUrl,amount:order.total_amount,currency:"XOF",orderId,env:"production"}});
+  if(!response.ok||gateway?.success===false){console.error("GeniusPay rejected",response.status,gateway);return json({success:false,error:gateway?.message||gateway?.error||"GeniusPay a refusé la création du paiement (HTTP "+response.status+")."},502);}
+  const data=gateway?.data||gateway,checkoutUrl=data.checkout_url||data.checkoutUrl||data.payment_url||data.url;
+  if(typeof checkoutUrl!=="string"||!checkoutUrl.startsWith("https://")){console.error("GeniusPay response without checkout URL",gateway);return json({success:false,error:"GeniusPay n'a pas fourni de checkout_url. Vérifiez les clés et le mode Live."},502);}
+  const txref=data.reference||reference;
+  const {error:updateError}=await db.from("orders").update({payment_method:body.paymentMethod,payment_phone:phone,transaction_reference:txref,checkout_url:checkoutUrl}).eq("id",orderId);
+  if(updateError){console.error("order update",updateError);return json({success:false,error:"Paiement initié mais impossible de sauvegarder sa référence."},500);}
+  return json({success:true,checkoutUrl,session:{transactionId:txref,checkoutUrl,amount:order.total_amount,currency:"XOF",orderId,env:"production"}});
  }catch(e){console.error("payment init",e);return json({success:false,error:"Erreur interne lors de l'initialisation du paiement."},500);}
 });
