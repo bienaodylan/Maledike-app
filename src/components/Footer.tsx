@@ -42,7 +42,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, conciergePhone })
               Mon Compte / Mes Billets
             </button>
             <a
-              href={`https://wa.me/2250150049489?text=${encodeURIComponent('Bonjour, demande d\\'information MALEDIKE PARTY')}`}
+              href={`https://wa.me/2250150049489?text=${encodeURIComponent('Bonjour, demande d'information MALEDIKE PARTY')}`}
               target="_blank"
               rel="noreferrer"
               className="hover:text-emerald-400 transition-colors flex items-center gap-1.5"
