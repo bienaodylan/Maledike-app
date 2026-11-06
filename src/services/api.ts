@@ -346,47 +346,47 @@ export const api = {
 
   // 4. Orders & Genius Pay Real Gateway
   async createOrder(data: {
-    userId: string;
-    buyerName: string;
-    buyerEmail: string;
-    buyerWhatsApp: string;
-    countryCode: string;
-    quantity: number;
-    digitalProductIds?: string[];
-    category?: TicketCategory;
-    categoryName?: string;
+    userId: string; buyerName: string; buyerEmail: string; buyerWhatsApp: string; countryCode: string;
+    quantity: number; digitalProductIds?: string[]; category?: TicketCategory; categoryName?: string;
   }): Promise<{ success: boolean; order?: Order; error?: string; geniusPayPublicKey?: string; env?: string }> {
-    const res = await fetch(`${API_BASE}/orders/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return parseJson(res);
+    try {
+      const { data: result, error } = await supabase.functions.invoke('create-order', { body: data });
+      if (error) return { success: false, error: error.message || 'Impossible de créer la réservation.' };
+      return result || { success: false, error: 'Réponse invalide du service de réservation.' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Connexion au service de réservation impossible.' };
+    }
   },
 
   async initiateGeniusPayPayment(data: {
-    orderId: string;
-    paymentMethod: PaymentProvider;
-    paymentPhone: string;
-    countryCode: string;
+    orderId: string; paymentMethod: PaymentProvider; paymentPhone: string; countryCode: string;
   }): Promise<{ success: boolean; session?: any; checkoutUrl?: string; error?: string }> {
-    const res = await fetch(`${API_BASE}/payments/geniuspay/initiate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return parseJson(res);
+    try {
+      const { data: result, error } = await supabase.functions.invoke('geniuspay-initiate', { body: data });
+      if (error) return { success: false, error: error.message || 'Initialisation du paiement impossible.' };
+      return result || { success: false, error: 'Réponse invalide de la passerelle de paiement.' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Connexion à la passerelle de paiement impossible.' };
+    }
   },
 
   async checkOrderStatus(orderId: string): Promise<{
     status: 'pending' | 'completed' | 'failed' | 'cancelled';
-    order?: Order;
-    tickets?: Ticket[];
-    digitalPurchases?: UserDigitalPurchase[];
-    expiresInSeconds?: number;
+    order?: Order; tickets?: Ticket[]; digitalPurchases?: UserDigitalPurchase[]; expiresInSeconds?: number;
   }> {
-    const res = await fetch(`${API_BASE}/payments/status/${encodeURIComponent(orderId)}`);
-    return parseJson(res);
+    try {
+      const { data: order, error } = await supabase.from('orders').select('*').eq('id', orderId).single();
+      if (error || !order) return { status: 'failed' };
+      const { data: tickets } = await supabase.from('tickets').select('*').eq('order_id', orderId);
+      return { status: order.status, order: {
+        id: order.id, userId: order.user_id, buyerName: order.buyer_name, buyerEmail: order.buyer_email,
+        buyerWhatsApp: order.buyer_whatsapp, countryCode: order.country_code, quantity: order.quantity,
+        unitPrice: order.unit_price, totalAmount: order.total_amount, currency: order.currency,
+        paymentMethod: order.payment_method, paymentPhone: order.payment_phone, transactionReference: order.transaction_reference,
+        checkoutUrl: order.checkout_url, status: order.status, reservationExpiresAt: Date.parse(order.reservation_expires_at),
+        createdAt: order.created_at, completedAt: order.completed_at, digitalProductIds: order.digital_product_ids || [],
+      }, tickets: (tickets || []).map((t:any)=>({id:t.id,ticketNumber:t.ticket_number,orderId:t.order_id,userId:t.user_id,attendeeName:t.attendee_name,attendeeEmail:t.attendee_email,attendeePhone:t.attendee_phone,eventTitle:t.event_title,eventDate:t.event_date,eventTime:t.event_time,price:t.price,qrTokenHash:t.qr_token_hash,status:t.status,createdAt:t.created_at,checkedInAt:t.checked_in_at,checkedInByAgent:t.checked_in_by_agent})) };
+    } catch { return { status: 'failed' }; }
   },
 
   async confirmPayment(orderId: string, transactionId?: string): Promise<{
