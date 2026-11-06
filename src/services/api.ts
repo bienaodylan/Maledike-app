@@ -389,19 +389,9 @@ export const api = {
     } catch { return { status: 'failed' }; }
   },
 
-  async confirmPayment(orderId: string, transactionId?: string): Promise<{
-    success: boolean;
-    order?: Order;
-    tickets?: Ticket[];
-    digitalPurchases?: UserDigitalPurchase[];
-    error?: string;
-  }> {
-    const res = await fetch(`${API_BASE}/orders/confirm`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId, transactionId }),
-    });
-    return parseJson(res);
+  async confirmPayment(orderId: string, transactionId?: string): Promise<{success:boolean;error?:string}> {
+    // Payment confirmation must come exclusively from the signed GeniusPay webhook.
+    return { success: false, error: "La confirmation du paiement est automatique et sécurisée. Attendez le retour GeniusPay." };
   },
 
   // 5. Digital Products
