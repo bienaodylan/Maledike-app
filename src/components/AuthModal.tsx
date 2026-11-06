@@ -246,7 +246,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 className="w-full bg-black/70 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
               />
               <Lock className="w-4 h-4 text-white/40 absolute left-3 top-3" />
-              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-2.5 text-[10px] text-emerald-300 font-bold" aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}>{showPassword ? "Masquer" : "Afficher"}</button>
+              {!isRegister && <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-2.5 text-[10px] text-emerald-300 font-bold" aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}>{showPassword ? "Masquer" : "Afficher"}</button>}
             </div>
           </div>}
 
