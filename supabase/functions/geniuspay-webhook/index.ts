@@ -16,21 +16,11 @@ Deno.serve(async(req)=>{
   if(event!=="payment.success")return json({received:true,ignored:true,event});
   if(data.status!=="completed")return json({error:"Payment status is not completed"},400);
   const orderId=String(data.metadata?.order_id||data.metadata?.orderId||"");if(!orderId)return json({error:"Missing order_id in metadata"},400);
-  const db=createClient(Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!),{data:order,error}=await db.from("orders").select("*").eq("id",orderId).single();
-  if(error||!order)return json({error:"Order not found"},404);
-  if(order.status==="completed")return json({received:true,message:"Order already fulfilled"});
-  if(!Number.isFinite(Number(data.amount))||Number(data.amount)!==Number(order.total_amount)||String(data.currency||"XOF").toUpperCase()!=="XOF")return json({error:"Payment amount/currency mismatch"},400);
-  const {error:updateError}=await db.from("orders").update({status:"completed",transaction_reference:data.reference||order.transaction_reference,completed_at:new Date().toISOString()}).eq("id",orderId).eq("status","pending");
-  if(updateError)return json({error:"Order update failed"},500);
-  const {count}=await db.from("tickets").select("*",{count:"exact",head:true}),tickets=[],now=Date.now();
-  for(let i=0;i<Number(order.quantity);i++){
-   const ticketId="tkt_"+now+"_"+i+"_"+crypto.randomUUID().slice(0,6),seq=String((count||0)+i+1).padStart(4,"0");
-   const token=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(ticketId+":"+order.user_id+":"+order.buyer_email+":"+crypto.randomUUID()));
-   const hash=Array.from(new Uint8Array(token)).map(x=>x.toString(16).padStart(2,"0")).join("");
-   tickets.push({id:ticketId,ticket_number:"MLDK-2026-"+seq,order_id:order.id,user_id:order.user_id,attendee_name:order.buyer_name,attendee_email:order.buyer_email,attendee_phone:order.buyer_whatsapp,event_title:"MALÉDIKÉ PARTY",event_date:"28 Novembre 2026",event_time:"23H00 — 06H00",price:order.unit_price,qr_token_hash:hash,status:"confirmed",created_at:new Date().toISOString()});
-  }
-  const {error:insertError}=await db.from("tickets").insert(tickets);
-  if(insertError){console.error("ticket insertion failed",insertError);await db.from("orders").update({status:"pending"}).eq("id",orderId);return json({error:"Ticket creation failed"},500);}
-  return json({success:true,orderId,ticketsCount:tickets.length});
+  if(!["completed","success"].includes(String(data.status||"").toLowerCase()))return json({error:"Payment status is not completed"},400);
+  const amount=Number(data.amount);if(!Number.isFinite(amount)||String(data.currency||"XOF").toUpperCase()!=="XOF")return json({error:"Invalid payment amount or currency"},400);
+  const db=createClient(Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const {data:result,error}=await db.rpc("fulfill_geniuspay_order",{p_order_id:orderId,p_reference:String(data.reference||""),p_amount:amount});
+  if(error){console.error("fulfill order RPC",error);if(error.message?.includes("ORDER_NOT_FOUND"))return json({error:"Order not found"},404);if(error.message?.includes("AMOUNT_MISMATCH"))return json({error:"Payment amount mismatch"},400);if(error.message?.includes("ORDER_EXPIRED"))return json({error:"Order expired"},400);return json({error:"Atomic order fulfillment failed"},500);}
+  return json({success:true,orderId,ticketsCount:result?.tickets_count||0,alreadyCompleted:!!result?.already_completed});
  }catch(e){console.error("Webhook error",e);return json({error:"Webhook processing error"},500);}
 });
