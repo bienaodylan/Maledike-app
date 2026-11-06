@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './services/api';
 import { EventConfig, SiteAssets, UserProfile, TicketCategory } from './types';
-import { SplashScreen } from './components/SplashScreen';
 import { Navbar } from './components/Navbar';
 import { MobileDrawer } from './components/MobileDrawer';
 import { HeroSection } from './components/HeroSection';
@@ -188,18 +187,12 @@ export default function App() {
       <div
         className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat pointer-events-none transition-all duration-700"
         style={{
-          backgroundImage: `url(${siteAssets.backgroundImageUrl})`,
+          backgroundImage: `url(${siteAssets.backgroundImageUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47_72294852.jpeg'})`,
         }}
       />
       {/* Smoked glass vignette overlay for high typography contrast & zero eye fatigue */}
       <div className="fixed inset-0 z-0 bg-gradient-to-b from-black/85 via-black/60 to-black/90 backdrop-blur-[2px] pointer-events-none" />
       <div className="fixed inset-0 z-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(5,5,10,0.85)_90%)] pointer-events-none" />
-
-      {/* 2. SPLASH SCREEN (SESSION SENSITIVE) */}
-      <SplashScreen
-        backgroundUrl={siteAssets.backgroundImageUrl}
-        onEnter={() => {}}
-      />
 
       {/* 3. MAIN NAVBAR */}
       <Navbar

@@ -227,13 +227,16 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               {/* Outer Glow */}
               <div className="absolute -inset-2 rounded-3xl bg-gradient-to-tr from-pink-500/30 via-emerald-500/20 to-purple-500/30 blur-2xl opacity-75" />
 
-              {/* Poster Container en format carré (aspect-square / 1:1) */}
-              <div className="relative aspect-square w-full rounded-2xl overflow-hidden glass-smoked border border-white/15 shadow-2xl group flex items-center justify-center bg-black/60">
+              {/* Poster Container : format d'affiche élégant sans rognage */}
+              <div className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden glass-smoked border border-white/20 shadow-2xl group flex items-center justify-center bg-black/50 p-2 sm:p-2.5">
                 <img
-                  src={flyerUrl}
+                  src={flyerUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'}
                   alt="Affiche Officielle MALEDIKE PARTY"
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  className="w-full h-auto max-h-[560px] object-contain rounded-xl sm:rounded-2xl transition-transform duration-700 group-hover:scale-[1.02]"
                   loading="eager"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg';
+                  }}
                 />
               </div>
             </motion.div>
