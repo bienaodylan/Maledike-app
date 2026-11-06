@@ -286,7 +286,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             disabled={isLoading}
             className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xl mt-4 disabled:opacity-50"
           >
-            <span>{isLoading ? 'Traitement en cours...' : (isRegister ? 'Créer mon compte VIP' : 'Se Connecter')}</span>
+            <span>{isLoading ? 'Traitement en cours...' : (isForgotPassword ? 'Envoyer le lien' : isRegister ? 'Créer mon compte VIP' : 'Se Connecter')}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
