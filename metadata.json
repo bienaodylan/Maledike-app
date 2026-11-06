@@ -1,0 +1,6 @@
+{
+  "name": "MALEDIKE PARTY — Billetterie VIP & Expérience",
+  "description": "Plateforme officielle de billetterie VIP et expérience exclusive pour la soirée MALEDIKE PARTY à Abidjan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
