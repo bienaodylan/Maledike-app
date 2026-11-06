@@ -352,7 +352,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
       }
 
       const targetCheckoutUrl = initRes.checkoutUrl || initRes.session?.checkoutUrl;
-      const appRedirectUrl = getOperatorAppRedirectUrl(selectedPaymentMethod, targetCheckoutUrl);
+      const appRedirectUrl = targetCheckoutUrl || getOperatorAppRedirectUrl(selectedPaymentMethod);
 
       setCheckoutUrl(appRedirectUrl);
 
