@@ -90,6 +90,8 @@ async function loadUserProfile(user: User): Promise<UserProfile> {
   const meta: any = user.user_metadata || {};
   const rawRole = (roleRes.data as any)?.role;
 
+  const founderEmail = 'bienaodylan428@gmail.com';
+  const isFounder = (user.email || '').trim().toLowerCase() === founderEmail;
   return {
     id: user.id,
     email: user.email || profile.email || '',
@@ -97,7 +99,8 @@ async function loadUserProfile(user: User): Promise<UserProfile> {
     lastName: profile.last_name || meta.lastName || '',
     whatsappNumber: profile.whatsapp_number || meta.whatsappNumber || '',
     countryCode: profile.country_code || meta.countryCode || '+225',
-    role: rawRole === 'admin' || rawRole === 'founder' ? 'admin' : 'user',
+    // Only the founder's exact verified Supabase email can ever receive admin UI role.
+    role: isFounder && (rawRole === 'founder' || rawRole === 'admin') ? 'admin' : 'user',
     createdAt: profile.created_at || user.created_at,
   };
 }
