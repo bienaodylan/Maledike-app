@@ -10,7 +10,7 @@ interface FooterProps {
   currentUser?: UserProfile | null;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conciergePhone, currentUser }) => {
+export const Footer: React.FC<FooterProps> = ({ onOpenAccount, conciergePhone }) => {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -33,7 +33,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
             </p>
           </div>
 
-          {/* Nav links */}
+          {/* Nav links — public footer contains no admin/portal entry */}
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs uppercase font-bold tracking-wider text-white/70">
             <button
               onClick={onOpenAccount}
@@ -42,7 +42,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
               Mon Compte / Mes Billets
             </button>
             <a
-              href={`https://wa.me/2250150049489?text=${encodeURIComponent('Bonjour, demande d\'information MALEDIKE PARTY')}`}
+              href={`https://wa.me/2250150049489?text=${encodeURIComponent('Bonjour, demande d\\'information MALEDIKE PARTY')}`}
               target="_blank"
               rel="noreferrer"
               className="hover:text-emerald-400 transition-colors flex items-center gap-1.5"
@@ -50,14 +50,6 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
               <Phone className="w-3 h-3 text-emerald-400" />
               <span>Conciergerie Privée VIP</span>
             </a>
-            {currentUser && (currentUser.role === 'admin' || currentUser.email?.toLowerCase() === 'bienaodylan428@gmail.com') && (
-              <button
-                onClick={onOpenAdmin}
-                className="hover:text-emerald-400 transition-colors cursor-pointer text-emerald-400 font-extrabold"
-              >
-                Portail Admin
-              </button>
-            )}
           </div>
 
           {/* Back to top */}
