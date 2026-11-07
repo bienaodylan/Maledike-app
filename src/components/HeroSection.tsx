@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Calendar, Clock, MapPin, Ticket, ChevronDown, ChevronLeft, ChevronRight, ShieldCheck } from 'lucide-react';
+import { Ticket, ChevronLeft, ChevronRight } from 'lucide-react';
 import { EventConfig } from '../types';
 
 interface HeroSectionProps {
@@ -28,238 +28,37 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   useEffect(() => {
     if (slides.length < 2) return;
     const timer = setInterval(() => setActiveSlide(index => (index + 1) % slides.length), 6000);
-    return () => clearInterval(timer);
-  }, [slides.length]);
-
-  // Live Countdown logic to November 28, 2026 23:00
-  const [timeLeft, setTimeLeft] = useState({
-    days: 0,
-    hours: 0,
-    minutes: 0,
-    seconds: 0,
-  });
-
-  useEffect(() => {
-    const target = new Date(event.targetDateIso || '2026-11-28T23:00:00').getTime();
-
-    const updateTimer = () => {
-      const now = Date.now();
-      const diff = Math.max(0, target - now);
-
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      setTimeLeft({ days, hours, minutes, seconds });
-    };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [event.targetDateIso]);
-
-  return (
-    <section id="home" className="relative pt-24 sm:pt-32 pb-16 sm:pb-24 px-4 sm:px-8 overflow-hidden">
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
-          {/* Left Column: Event Presentation & Countdown */}
-          <div className="lg:col-span-7 flex flex-col items-start text-left z-10">
-            {/* Tagline Badge */}
-            <motion.div
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/70 border border-emerald-500/30 text-emerald-400 text-xs font-bold uppercase tracking-widest mb-4 shadow-lg backdrop-blur-md"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Mireza Caribbean présente</span>
-            </motion.div>
-
-            {/* Main Headline with responsive typography and zero clipping */}
-            <motion.h1
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.1 }}
-              className="text-4xl xs:text-5xl sm:text-6xl md:text-7xl xl:text-8xl font-black uppercase tracking-tight text-white font-display leading-[0.95] drop-shadow-2xl max-w-full break-words"
-            >
-              MALEDIKE
-              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-rose-300 to-pink-500 font-black italic">
-                PARTY
-              </span>
-            </motion.h1>
-
-            {/* Quick Specs Badges */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-              className="flex flex-wrap items-center gap-2 sm:gap-3 my-4 sm:my-5"
-            >
-              <div className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-black/60 border border-white/10 text-white/90 text-[11px] sm:text-xs font-semibold backdrop-blur-md">
-                <Calendar className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-                <span>SAMEDI 28 NOVEMBRE 2026</span>
-              </div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-black/60 border border-white/10 text-white/90 text-[11px] sm:text-xs font-semibold backdrop-blur-md">
-                <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>23H00 — 06H00</span>
-              </div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-[11px] sm:text-xs font-bold backdrop-blur-md">
-                <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>SECRET LOCATION</span>
-              </div>
-            </motion.div>
-
-            {/* Secret Location Banner if revealed */}
-            {secretLocationRevealed && secretAddress && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="w-full mb-4 p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs flex items-start gap-2.5 backdrop-blur-md"
-              >
-                <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-extrabold text-white block uppercase tracking-wide">
-                    📍 Adresse Débloquée pour les Titulaires :
-                  </span>
-                  <span className="text-emerald-100">{secretAddress}</span>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Compte à Rebours Officiel - Glassmorphism Vert Émeraude Panel */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.25 }}
-              className="w-full max-w-xl glass-smoked p-4 sm:p-5 rounded-2xl border border-white/10 mb-6 shadow-2xl relative overflow-hidden"
-            >
-              <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-white/10">
-                <div className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-emerald-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span>Compte à rebours officiel</span>
-                </div>
-                <div className="text-[10px] sm:text-[11px] font-semibold text-white/50 uppercase tracking-widest">
-                  28 NOV • 23H
-                </div>
-              </div>
-
-              {/* 4 Counter boxes */}
-              <div className="grid grid-cols-4 gap-1.5 sm:gap-3">
-                <div className="glass-emerald-card rounded-xl p-2 sm:p-3 text-center border border-emerald-500/30">
-                  <div className="text-xl sm:text-4xl font-extrabold text-white font-display tracking-tight">
-                    {String(timeLeft.days).padStart(2, '0')}
-                  </div>
-                  <div className="text-[9px] sm:text-xs font-bold uppercase tracking-widest text-emerald-300">
-                    Jours
-                  </div>
-                </div>
-
-                <div className="glass-emerald-card rounded-xl p-2 sm:p-3 text-center border border-emerald-500/30">
-                  <div className="text-xl sm:text-4xl font-extrabold text-white font-display tracking-tight">
-                    {String(timeLeft.hours).padStart(2, '0')}
-                  </div>
-                  <div className="text-[9px] sm:text-xs font-bold uppercase tracking-widest text-emerald-300">
-                    Heures
-                  </div>
-                </div>
-
-                <div className="glass-emerald-card rounded-xl p-2 sm:p-3 text-center border border-emerald-500/30">
-                  <div className="text-xl sm:text-4xl font-extrabold text-white font-display tracking-tight">
-                    {String(timeLeft.minutes).padStart(2, '0')}
-                  </div>
-                  <div className="text-[9px] sm:text-xs font-bold uppercase tracking-widest text-emerald-300">
-                    Minutes
-                  </div>
-                </div>
-
-                <div className="glass-emerald-card rounded-xl p-2 sm:p-3 text-center border border-emerald-500/30">
-                  <div className="text-xl sm:text-4xl font-extrabold text-white font-display tracking-tight text-emerald-400">
-                    {String(timeLeft.seconds).padStart(2, '0')}
-                  </div>
-                  <div className="text-[9px] sm:text-xs font-bold uppercase tracking-widest text-emerald-300">
-                    Secondes
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* CTAs */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.3 }}
-              className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto"
-            >
-              <button
-                onClick={onOpenBooking}
-                disabled={event.status === 'sold_out'}
-                className="glass-emerald-btn group px-6 sm:px-7 py-3.5 sm:py-4 rounded-xl text-black font-extrabold text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2.5 cursor-pointer shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Ticket className="w-4 h-4 sm:w-5 sm:h-5 text-black" />
-                <span>
-                  {event.status === 'sold_out'
-                    ? 'COMPLET / SOLD OUT'
-                    : 'RÉSERVER MON BILLET (10.000 FCFA)'}
-                </span>
-              </button>
-
-              <button
-                onClick={onExplore}
-                className="px-5 sm:px-6 py-3.5 sm:py-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer backdrop-blur-md"
-              >
-                <span>Découvrir l'univers</span>
-                <ChevronDown className="w-4 h-4 text-emerald-400 group-hover:translate-y-0.5 transition-transform" />
-              </button>
-            </motion.div>
-
-            {/* Security Guarantee */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.35 }}
-              className="flex items-center gap-2 mt-4 sm:mt-5 text-[10px] sm:text-[11px] text-white/60"
-            >
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>
-                Paiement mobile sécurisé • Billet QR code personnel, valable pour un seul passage.
-              </span>
-            </motion.div>
+    return (
+    <section id="home" className="relative w-full min-h-[calc(100svh-72px)] flex items-center justify-center px-0 sm:px-4 lg:px-6 py-0 sm:py-5 overflow-hidden">
+      <div className="relative w-full max-w-[1920px] aspect-video sm:rounded-2xl overflow-hidden bg-black shadow-2xl border-y sm:border border-white/10">
+        <img
+          key={slides[activeSlide] || flyerUrl}
+          src={slides[activeSlide] || flyerUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'}
+          alt={`Affiche MALEDIKE PARTY ${activeSlide + 1}`}
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="eager"
+          onError={(e) => { (e.target as HTMLImageElement).src = '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'; }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-black/10 pointer-events-none"/>
+        {slides.length > 1 && <>
+          <button type="button" aria-label="Image précédente" onClick={() => setActiveSlide(i => (i - 1 + slides.length) % slides.length)} className="absolute left-2 sm:left-5 top-1/2 -translate-y-1/2 rounded-full bg-black/55 hover:bg-black/85 text-white p-1.5 sm:p-3 border border-white/20"><ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6"/></button>
+          <button type="button" aria-label="Image suivante" onClick={() => setActiveSlide(i => (i + 1) % slides.length)} className="absolute right-2 sm:right-5 top-1/2 -translate-y-1/2 rounded-full bg-black/55 hover:bg-black/85 text-white p-1.5 sm:p-3 border border-white/20"><ChevronRight className="w-4 h-4 sm:w-6 sm:h-6"/></button>
+          <div className="absolute top-3 sm:top-5 left-0 right-0 flex justify-center gap-1.5 sm:gap-2">
+            {slides.map((_, i) => <button key={i} type="button" aria-label={`Afficher l’image ${i + 1}`} onClick={() => setActiveSlide(i)} className={`h-1.5 sm:h-2 rounded-full transition-all ${i === activeSlide ? 'w-5 sm:w-7 bg-white' : 'w-1.5 sm:w-2 bg-white/60'}`}/>)}
           </div>
-
-          {/* Right Column: Hero Visual Flyer in its natural aspect ratio without artificial clutter badges */}
-          <div className="lg:col-span-5 flex justify-center z-10 mt-8 sm:mt-10 lg:mt-0">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-              className="relative w-full max-w-sm sm:max-w-md"
-            >
-              {/* Outer Glow */}
-              <div className="absolute -inset-2 rounded-3xl bg-gradient-to-tr from-pink-500/30 via-emerald-500/20 to-purple-500/30 blur-2xl opacity-75" />
-
-              {/* Poster Container : format d'affiche élégant sans rognage */}
-              <div className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden glass-smoked border border-white/20 shadow-2xl group flex items-center justify-center bg-black/50 p-2 sm:p-2.5">
-                <img
-                  key={slides[activeSlide] || flyerUrl}
-                  src={slides[activeSlide] || flyerUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'}
-                  alt={`Visuel MALEDIKE PARTY ${activeSlide + 1}`}
-                  className="w-full h-auto max-h-[560px] object-contain rounded-xl sm:rounded-2xl transition-all duration-700"
-                  loading="eager"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg';
-                  }}
-                />
-                {slides.length > 1 && <>
-                  <button type="button" aria-label="Image précédente" onClick={() => setActiveSlide(i => (i - 1 + slides.length) % slides.length)} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/65 hover:bg-black/90 text-white p-2 border border-white/20"><ChevronLeft className="w-5 h-5"/></button>
-                  <button type="button" aria-label="Image suivante" onClick={() => setActiveSlide(i => (i + 1) % slides.length)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/65 hover:bg-black/90 text-white p-2 border border-white/20"><ChevronRight className="w-5 h-5"/></button>
-                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2">
-                    {slides.map((_, i) => <button key={i} type="button" aria-label={`Afficher l’image ${i + 1}`} onClick={() => setActiveSlide(i)} className={`h-2.5 rounded-full transition-all ${i === activeSlide ? 'w-7 bg-emerald-400' : 'w-2.5 bg-white/60 hover:bg-white'}`}/>)}
-                  </div>
-                </>}
-              </div>
-            </motion.div>
+        </>}
+        <div className="absolute inset-x-0 bottom-0 p-2.5 sm:p-6 lg:p-10 flex flex-col items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-1.5 sm:gap-3 text-white">
+            {[
+              ['J', timeLeft.days], ['H', timeLeft.hours], ['M', timeLeft.minutes], ['S', timeLeft.seconds]
+            ].map(([label, value]) => <div key={label} className="min-w-[42px] sm:min-w-[72px] px-1.5 sm:px-3 py-1 sm:py-2 rounded-md sm:rounded-xl bg-black/55 border border-white/20 backdrop-blur-md text-center">
+              <div className="text-base sm:text-3xl lg:text-4xl font-black tabular-nums leading-tight">{String(value).padStart(2,'0')}</div>
+              <div className="text-[8px] sm:text-xs uppercase tracking-wider text-white/75">{label}</div>
+            </div>)}
           </div>
+          <button onClick={onOpenBooking} disabled={event.status === 'sold_out'} className="glass-emerald-btn px-4 sm:px-8 py-2 sm:py-4 rounded-lg sm:rounded-xl text-black font-extrabold text-[10px] sm:text-sm lg:text-base uppercase tracking-wide flex items-center justify-center gap-2 shadow-xl disabled:opacity-50">
+            <Ticket className="w-3.5 h-3.5 sm:w-5 sm:h-5"/>{event.status === 'sold_out' ? 'COMPLET / SOLD OUT' : 'RÉSERVER MON BILLET'}
+          </button>
         </div>
       </div>
     </section>
