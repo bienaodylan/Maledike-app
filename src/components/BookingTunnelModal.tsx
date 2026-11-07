@@ -871,7 +871,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                   La confirmation s'affichera automatiquement dès que le paiement sera validé par la passerelle.
                 </div>
                 <button type="button" onClick={() => setStep(3)} className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80 text-xs font-semibold uppercase tracking-wider cursor-pointer transition-colors">Modifier le numéro ou la commande</button>
-                {errorMessage && <p role="alert" className="text-amber-300 text-xs">{errorMessage}</p>
+                {errorMessage && <p role="alert" className="text-amber-300 text-xs">{errorMessage}</p>}
               </div>
             </div>
           )}
