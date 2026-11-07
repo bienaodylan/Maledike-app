@@ -9,7 +9,7 @@ interface MoodSectionProps {
 
 export const MoodSection: React.FC<MoodSectionProps> = ({ moodImage1, moodImage2 }) => {
   return (
-    <section id="experience" className="relative py-16 sm:py-24 px-4 sm:px-8">
+    <section id="experience" className="relative py-8 sm:py-24 px-4 sm:px-8">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="mb-12 sm:mb-16 text-center">
