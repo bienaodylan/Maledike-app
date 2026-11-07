@@ -242,6 +242,10 @@ let db = readDb();
 const supabaseAdmin = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
   : null;
+const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
+const ROOT_ADMIN_EMAIL = 'bienaodylan428@gmail.com';
 function orderToRow(order: any) {
   return { id: order.id, user_id: order.userId, buyer_name: order.buyerName, buyer_email: order.buyerEmail,
     buyer_whatsapp: order.buyerWhatsApp, country_code: order.countryCode, quantity: order.quantity,
@@ -463,76 +467,36 @@ app.post('/api/upload', (req, res) => {
 });
 
 // ----------------- 2. AUTHENTICATION -----------------
-app.post('/api/auth/register', (req, res) => {
-  db = readDb();
-  const { email, password, firstName, lastName, whatsappNumber, countryCode } = req.body;
-  if (!email || !password || !firstName || !lastName || !whatsappNumber) {
-    return res.status(400).json({ error: 'Tous les champs sont obligatoires.' });
-  }
-
-  const normalizedEmail = email.toLowerCase().trim();
-  const existing = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
-  if (existing) {
-    return res.status(400).json({ error: 'Un compte avec cette adresse email existe déjà.' });
-  }
-
-  const newProfile = {
-    id: 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-    email: normalizedEmail,
-    passwordHash: password,
-    firstName: firstName.trim(),
-    lastName: lastName.trim(),
-    whatsappNumber: whatsappNumber.trim(),
-    countryCode: countryCode || '+225',
-    role: (normalizedEmail === 'bienaodylan428@gmail.com' ? 'admin' : 'user') as 'user' | 'admin',
-    createdAt: new Date().toISOString(),
-  };
-
-  db.profiles.push(newProfile);
-  saveDb(db);
-  const { passwordHash: _, ...safeUser } = newProfile;
-  res.json({ success: true, user: safeUser });
+// AUTH — Supabase Auth is the single source of truth. Never compare/store plaintext passwords in db.json.
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, firstName, lastName, whatsappNumber, countryCode } = req.body || {};
+    if (!email || !password || !firstName || !lastName || !whatsappNumber) return res.status(400).json({ success:false, error:'Tous les champs sont obligatoires.' });
+    if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({ success:false, error:'Service d’authentification indisponible.' });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const { data, error } = await supabaseAuth.auth.signUp({ email: normalizedEmail, password, options:{ data:{ first_name:String(firstName).trim(), last_name:String(lastName).trim(), whatsapp_number:String(whatsappNumber).trim(), country_code:countryCode || '+225' } } });
+    if (error) return res.status(400).json({ success:false, error:error.message });
+    if (!data.user) return res.status(400).json({ success:false, error:'Création du compte non confirmée.' });
+    const profile={ id:data.user.id,email:normalizedEmail,first_name:String(firstName).trim(),last_name:String(lastName).trim(),whatsapp_number:String(whatsappNumber).trim(),country_code:countryCode||'+225' };
+    const { error: profileError }=await supabaseAdmin.from('profiles').upsert(profile,{onConflict:'id'});
+    if(profileError) console.error('[auth/register] profile sync:',profileError.message);
+    return res.json({success:true,needsEmailConfirmation:!data.session,user:{id:data.user.id,email:normalizedEmail,firstName:profile.first_name,lastName:profile.last_name,whatsappNumber:profile.whatsapp_number,countryCode:profile.country_code,role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:data.user.created_at}});
+  } catch(e:any) { console.error('[auth/register]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la création du compte.'}); }
 });
 
-app.post('/api/auth/login', (req, res) => {
-  db = readDb();
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email et mot de passe requis.' });
-  }
-
-  const normalizedEmail = email.toLowerCase().trim();
-  let user = db.profiles.find(p => p.email.toLowerCase() === normalizedEmail);
-
-  // Ensure Dylan's root account is always active with admin role
-  if (normalizedEmail === 'bienaodylan428@gmail.com') {
-    if (!user) {
-      user = {
-        id: 'admin_root_1',
-        email: 'bienaodylan428@gmail.com',
-        passwordHash: 'maledike2026',
-        firstName: 'Dylan',
-        lastName: 'Bienao',
-        whatsappNumber: '0150049489',
-        countryCode: '+225',
-        role: 'admin',
-        createdAt: new Date().toISOString(),
-      };
-      db.profiles.push(user);
-      saveDb(db);
-    } else {
-      user.role = 'admin';
-      saveDb(db);
-    }
-  }
-
-  const isPasswordValid = user && (user.passwordHash === password || (normalizedEmail === 'bienaodylan428@gmail.com' && password === 'maledike2026'));
-  if (!user || !isPasswordValid) {
-    return res.status(401).json({ error: 'Email ou mot de passe incorrect.' });
-  }
-
-  const { passwordHash: _, ...safeUser } = user;
-  res.json({ success: true, user: safeUser });
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({success:false,error:'Email et mot de passe requis.'});
+    if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({success:false,error:'Service d’authentification indisponible.'});
+    const normalizedEmail=String(email).trim().toLowerCase();
+    const {data,error}=await supabaseAuth.auth.signInWithPassword({email:normalizedEmail,password});
+    if(error || !data.user) return res.status(401).json({success:false,error:'Email ou mot de passe incorrect.'});
+    const {data:profile}=await supabaseAdmin.from('profiles').select('*').eq('id',data.user.id).maybeSingle();
+    const meta=data.user.user_metadata||{};
+    const user={id:data.user.id,email:normalizedEmail,firstName:profile?.first_name||meta.first_name||'',lastName:profile?.last_name||meta.last_name||'',whatsappNumber:profile?.whatsapp_number||meta.whatsapp_number||'',countryCode:profile?.country_code||meta.country_code||'+225',role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:data.user.created_at};
+    return res.json({success:true,user});
+  } catch(e:any) { console.error('[auth/login]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la connexion.'}); }
 });
 
 app.post('/api/auth/update-profile', (req, res) => {
