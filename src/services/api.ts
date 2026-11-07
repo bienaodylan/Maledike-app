@@ -20,6 +20,13 @@ import {
 
 const API_BASE = '/api';
 
+// Parse les réponses API de façon robuste : les erreurs Vercel en texte/HTML ne doivent jamais déclencher « Unexpected token… ».
+async function readApiJson<T = any>(res: Response): Promise<T> {
+  const raw = await res.text();
+  try { return JSON.parse(raw) as T; }
+  catch { throw new Error(`Réponse API invalide (HTTP ${res.status}). ${raw.slice(0, 180) || 'Réponse vide'}`); }
+}
+
 const STORAGE_KEYS = {
   USER: 'maledike_auth_user',
   PENDING_ORDER: 'maledike_pending_order',
@@ -62,7 +69,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    return res.json();
+    return readApiJson(res);
   },
 
   // 2. Site Assets
@@ -134,7 +141,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    const result = await res.json();
+    const result = await readApiJson(res);
     if (result.success && result.user) {
       localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
     }
