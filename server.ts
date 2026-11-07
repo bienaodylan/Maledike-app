@@ -1,4 +1,5 @@
 import express from 'express';
+import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -237,6 +238,37 @@ function saveDb(data: DatabaseSchema) {
 }
 
 let db = readDb();
+
+const supabaseAdmin = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+  : null;
+function orderToRow(order: any) {
+  return { id: order.id, user_id: order.userId, buyer_name: order.buyerName, buyer_email: order.buyerEmail,
+    buyer_whatsapp: order.buyerWhatsApp, country_code: order.countryCode, quantity: order.quantity,
+    unit_price: order.unitPrice, total_amount: order.totalAmount, currency: order.currency,
+    payment_method: order.paymentMethod, payment_phone: order.paymentPhone, transaction_reference: order.transactionReference,
+    checkout_url: order.checkoutUrl || null, status: order.status, reservation_expires_at: new Date(order.reservationExpiresAt).toISOString(),
+    digital_product_ids: order.digitalProductIds || [], created_at: order.createdAt, completed_at: order.completedAt || null };
+}
+function rowToOrder(row: any) {
+  return { id: row.id, userId: row.user_id, buyerName: row.buyer_name, buyerEmail: row.buyer_email,
+    buyerWhatsApp: row.buyer_whatsapp, countryCode: row.country_code, quantity: row.quantity, unitPrice: row.unit_price,
+    totalAmount: row.total_amount, currency: row.currency, paymentMethod: row.payment_method, paymentPhone: row.payment_phone,
+    transactionReference: row.transaction_reference, checkoutUrl: row.checkout_url, status: row.status,
+    reservationExpiresAt: new Date(row.reservation_expires_at).getTime(), digitalProductIds: row.digital_product_ids || [],
+    createdAt: row.created_at, completedAt: row.completed_at };
+}
+async function persistOrder(order: any) {
+  if (!supabaseAdmin) throw new Error('Supabase serveur non configuré.');
+  const { error } = await supabaseAdmin.from('orders').upsert(orderToRow(order), { onConflict: 'id' });
+  if (error) throw error;
+}
+async function loadOrder(orderId: string) {
+  if (!supabaseAdmin) return db.orders.find(o => o.id === orderId);
+  const { data, error } = await supabaseAdmin.from('orders').select('*').eq('id', orderId).maybeSingle();
+  if (error) throw error;
+  return data ? rowToOrder(data) : undefined;
+}
 
 // Helper: Timing safe comparison
 function timingSafeEqual(a: string, b: string): boolean {
@@ -520,7 +552,7 @@ app.post('/api/auth/update-profile', (req, res) => {
 });
 
 // ----------------- 3. ORDERS & GENIUS PAY REAL PAYMENT GATEWAY -----------------
-app.post('/api/orders/create', (req, res) => {
+app.post('/api/orders/create', async (req, res) => {
   db = readDb();
   const { userId, buyerName, buyerEmail, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
 
@@ -579,6 +611,7 @@ app.post('/api/orders/create', (req, res) => {
   };
 
   db.orders.push(newOrder);
+  try { await persistOrder(newOrder); } catch (e: any) { console.error('Supabase order insert failed:', e.message); return res.status(500).json({ error: 'Impossible d’enregistrer la commande. Réessayez.' }); }
   saveDb(db);
 
   res.json({
@@ -595,7 +628,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     const { orderId, paymentMethod, paymentPhone, countryCode } = req.body;
     db = readDb();
 
-    const order = db.orders.find(o => o.id === orderId);
+    const order = await loadOrder(orderId);
     if (!order) {
       return res.status(404).json({ error: 'Commande introuvable.' });
     }
@@ -613,6 +646,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     const txnRef = `GP_TXN_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     order.transactionReference = txnRef;
     saveDb(db);
+    await persistOrder(order);
 
     const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
     const hostOrigin = req.get('origin') || (req.get('referer') ? new URL(req.get('referer')!).origin : null);
@@ -731,7 +765,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
 app.get('/api/payments/status/:orderId', async (req, res) => {
   const { orderId } = req.params;
   db = readDb();
-  const order = db.orders.find(o => o.id === orderId);
+  const order = await loadOrder(orderId);
 
   if (!order) {
     return res.status(404).json({ error: 'Commande introuvable' });
