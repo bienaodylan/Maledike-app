@@ -548,15 +548,9 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                           : 'bg-black/50 border-white/10 hover:border-white/20'
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="mb-1">
                         <span className="text-xs font-black text-white">{cat.shortName}</span>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                          selectedCategory === cat.id ? 'bg-emerald-400 text-black' : 'bg-white/10 text-emerald-300'
-                        }`}>
-                          {cat.badge}
-                        </span>
                       </div>
-                      <p className="text-[11px] text-white/60 line-clamp-1">{cat.description}</p>
                     </button>
                   ))}
                 </div>
