@@ -13,7 +13,7 @@ export const SalonsSection: React.FC<SalonsSectionProps> = ({
   conciergePhone = '+225 07 58 98 83 60',
 }) => {
   return (
-    <section id="salons" className="relative py-20 sm:py-28 px-4 sm:px-6 overflow-hidden">
+    <section id="salons" className="relative py-10 sm:py-28 px-4 sm:px-6 overflow-hidden">
       {/* Background ambient lighting */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-500/10 blur-[130px] rounded-full pointer-events-none" />
       <div className="absolute top-1/4 right-10 w-96 h-96 bg-emerald-500/10 blur-[120px] rounded-full pointer-events-none" />
