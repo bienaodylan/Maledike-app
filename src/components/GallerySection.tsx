@@ -10,7 +10,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ images }) => {
   const [activeImage, setActiveImage] = useState<string | null>(null);
 
   return (
-    <section id="gallery" className="relative py-16 sm:py-24 px-4 sm:px-8">
+    <section id="gallery" className="relative py-8 sm:py-24 px-4 sm:px-8">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="mb-10 sm:mb-14 text-center">
