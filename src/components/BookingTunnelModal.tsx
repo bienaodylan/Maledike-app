@@ -392,6 +392,21 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
     }
   };
 
+  // Contrôle après retour de Mireza : la validation vient exclusivement du serveur/passerelle.
+  const handlePaymentReturnCheck = async () => {
+    if (!currentOrder || isProcessing) return;
+    setIsProcessing(true); setErrorMessage(null);
+    try {
+      const result = await api.confirmPayment(currentOrder.id);
+      if (result.success && result.tickets?.length) {
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+        setIssuedTickets(result.tickets); setPaymentStatus('completed'); setStep(5);
+        confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 }, colors: ['#10b981', '#ec4899', '#f43f5e', '#ffffff'] });
+      } else { setPaymentStatus('pending'); setErrorMessage(result.error || 'Paiement pas encore confirmé par la passerelle.'); }
+    } catch (e: any) { setErrorMessage(e?.message || 'Vérification impossible. Réessayez.'); }
+    finally { setIsProcessing(false); }
+  };
+
   // Polling logic for Step 4
   const startPaymentPolling = (orderId: string) => {
     if (pollTimerRef.current) {
@@ -821,13 +836,13 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
               {/* Waiting messages */}
               <div className="space-y-2">
                 <h3 className="text-xl sm:text-2xl font-black uppercase text-white font-display">
-                  Paiement Wave en cours
+                  Paiement via Mireza en cours
                 </h3>
                 <p className="text-sm sm:text-base font-bold text-sky-300">
                   En attente de la confirmation de votre paiement...
                 </p>
                 <p className="text-xs text-white/60 max-w-sm mx-auto">
-                  Veuillez valider le débit de <strong className="text-white">{totalAmount.toLocaleString()} FCFA</strong> dans votre application Wave. Dès validation, vos billets et QR Codes sont générés automatiquement.
+                  Veuillez valider le débit de <strong className="text-white">{totalAmount.toLocaleString()} FCFA</strong> dans votre application Mireza. Dès validation, vos billets et QR Codes sont générés automatiquement.
                 </p>
               </div>
 
@@ -838,27 +853,25 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                   <span className="text-xs font-black uppercase tracking-wider text-white">Validation automatique sécurisée</span>
                 </div>
                 <p className="text-[11px] text-white/70 leading-relaxed">
-                  Dès que vous confirmez le débit dans Wave sur votre téléphone, cette page se mettra à jour toute seule pour générer vos billets certifiés avec QR Code anti-fraude.
+                  Dès que Mireza confirme le débit, cette page se mettra à jour toute seule pour générer vos billets certifiés avec QR Code anti-fraude.
                 </p>
               </div>
 
               {/* Mobile app trigger & modify options */}
               <div className="pt-2 max-w-sm mx-auto flex flex-col gap-2.5">
                 <a
-                  href="wave://"
+                  href="mireza://"
                   className="w-full py-3 px-4 rounded-xl bg-[#1DC4FF]/15 border border-[#1DC4FF]/30 hover:bg-[#1DC4FF]/25 text-[#1DC4FF] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors cursor-pointer"
                 >
                   <Smartphone className="w-4 h-4" />
-                  <span>Basculer vers l'application Wave</span>
+                  <span>Ouvrir l'application Mireza</span>
                 </a>
 
-                <button
-                  type="button"
-                  onClick={() => setStep(3)}
-                  className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80 text-xs font-semibold uppercase tracking-wider cursor-pointer transition-colors"
-                >
-                  Modifier le numéro ou la commande
+                <button type="button" disabled={isProcessing} onClick={handlePaymentReturnCheck} className="w-full py-3 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-50 font-bold text-xs uppercase tracking-wider cursor-pointer transition-colors">
+                  {isProcessing ? 'Vérification sécurisée…' : "J'ai confirmé mon paiement"}
                 </button>
+                <button type="button" onClick={() => setStep(3)} className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80 text-xs font-semibold uppercase tracking-wider cursor-pointer transition-colors">Modifier le numéro ou la commande</button>
+                {errorMessage && <p role="alert" className="text-amber-300 text-xs">{errorMessage}</p>
               </div>
             </div>
           )}
