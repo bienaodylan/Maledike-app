@@ -223,7 +223,7 @@ export default function App() {
       />
 
       {/* 5. CONTINUOUS SCROLL EXPERIENCE */}
-      <main className="relative z-10">
+      <main className="relative z-10 pt-24 sm:pt-28">
         {/* Hero Section */}
         <HeroSection
           event={event}
