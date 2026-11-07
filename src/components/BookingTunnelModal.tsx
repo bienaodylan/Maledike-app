@@ -301,23 +301,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
   const handleSelectPaymentMethod = (method: PaymentProvider) => {
     setSelectedPaymentMethod(method);
     setErrorMessage(null);
-
-    // Basculement automatique vers l'application mobile lors de la sélection (orange-money://, mtn-money://, moov-money://, wave://)
-    const protocol = OPERATOR_MOBILE_PROTOCOLS[method];
-    if (protocol && typeof window !== 'undefined') {
-      try {
-        const link = document.createElement('a');
-        link.href = protocol;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => {
-          try {
-            document.body.removeChild(link);
-          } catch {}
-        }, 1000);
-      } catch {}
-    }
+    // La redirection vers l'opérateur se fait uniquement via le checkout GeniusPay.
   };
 
   // -------------------------------------------------------------
@@ -351,34 +335,23 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
         throw new Error(errorText);
       }
 
-      // Déclenchement de l'application Wave directement sur smartphone sans quitter notre site
-      if (typeof window !== 'undefined') {
-        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        if (isMobile) {
-          try {
-            const waveLink = document.createElement('a');
-            waveLink.href = 'wave://';
-            waveLink.style.display = 'none';
-            document.body.appendChild(waveLink);
-            waveLink.click();
-            setTimeout(() => {
-              try { document.body.removeChild(waveLink); } catch {}
-            }, 500);
-          } catch {}
-        }
+      // GeniusPay fournit l'URL de paiement (Wave si le mode est disponible).
+      const redirectUrl = initRes.checkoutUrl || initRes.session?.checkoutUrl;
+      if (!redirectUrl || !/^https:\/\//i.test(redirectUrl)) {
+        throw new Error('GeniusPay n’a pas fourni de lien de paiement sécurisé.');
       }
+      setCheckoutUrl(redirectUrl);
 
       if (initRes.session?.env) {
         setGatewayEnv(initRes.session.env);
       }
 
-      // Transition immédiate vers l'étape 4 : En attente de la confirmation
       setPaymentStatus('pending');
       setIsProcessing(false);
       setStep(4);
-
-      // Lancement de la vérification automatique
       startPaymentPolling(currentOrder.id);
+      // Ouverture de la page officielle de checkout GeniusPay.
+      window.location.assign(redirectUrl);
     } catch (err: any) {
       setIsProcessing(false);
       const msg = typeof err === 'string'
@@ -770,7 +743,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
 
               {/* Infoline Help note for other methods */}
               <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between text-[11px] text-white/70">
-                <span>Autre moyen ou assistance ? Infoline Mireza :</span>
+                <span>Autre moyen ou assistance ? Service client :</span>
                 <a
                   href="https://wa.me/2250758988360?text=Bonjour%20Mireza%20Caribbean,%20je%20souhaite%20r%C3%A9server%20pour%20la%20Maledike%20Party."
                   target="_blank"
@@ -842,34 +815,14 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                   Nous attendons la confirmation officielle du paiement…
                 </p>
                 <p className="text-xs text-white/60 max-w-sm mx-auto">
-                  Veuillez valider le débit de <strong className="text-white">{totalAmount.toLocaleString()} FCFA</strong> dans votre application Mireza. Dès validation, vos billets et QR Codes sont générés automatiquement.
+                  Finalisez le paiement de <strong className="text-white">{totalAmount.toLocaleString()} FCFA</strong> sur la page sécurisée GeniusPay. Vos billets seront générés après confirmation de la passerelle.
                 </p>
               </div>
 
-              {/* Live Status indicator */}
-              <div className="p-4 rounded-2xl bg-black/60 border border-[#1DC4FF]/30 max-w-sm mx-auto space-y-2 text-left shadow-lg shadow-[#1DC4FF]/10">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-xs font-black uppercase tracking-wider text-white">Validation automatique sécurisée</span>
-                </div>
-                <p className="text-[11px] text-white/70 leading-relaxed">
-                  Nous vérifions automatiquement le statut auprès du service de paiement. La section « Paiement confirmé » et vos billets apparaîtront uniquement après validation serveur.
-                </p>
+              <div className="w-full max-w-sm mx-auto rounded-xl bg-sky-500/10 border border-sky-400/25 px-4 py-3 text-sky-200 text-xs font-semibold text-center">
+                Le paiement sera confirmé automatiquement dès que GeniusPay aura validé la transaction.
               </div>
-
-              {/* Mobile app trigger & modify options */}
               <div className="pt-2 max-w-sm mx-auto flex flex-col gap-2.5">
-                <a
-                  href="mireza://"
-                  className="w-full py-3 px-4 rounded-xl bg-[#1DC4FF]/15 border border-[#1DC4FF]/30 hover:bg-[#1DC4FF]/25 text-[#1DC4FF] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                >
-                  <Smartphone className="w-4 h-4" />
-                  <span>Ouvrir l'application Mireza</span>
-                </a>
-
-                <div className="w-full rounded-xl bg-sky-500/10 border border-sky-400/25 px-4 py-3 text-sky-200 text-xs font-semibold text-center">
-                  La confirmation s'affichera automatiquement dès que le paiement sera validé par la passerelle.
-                </div>
                 <button type="button" onClick={() => setStep(3)} className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80 text-xs font-semibold uppercase tracking-wider cursor-pointer transition-colors">Modifier le numéro ou la commande</button>
                 {errorMessage && <p role="alert" className="text-amber-300 text-xs">{errorMessage}</p>}
               </div>
