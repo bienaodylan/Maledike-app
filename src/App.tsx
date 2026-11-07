@@ -228,6 +228,7 @@ export default function App() {
         <HeroSection
           event={event}
           flyerUrl={siteAssets.heroFlyerUrl}
+          heroImages={siteAssets.galleryImages}
           onOpenBooking={() => handleOpenBooking(1, 'pass_vip')}
           onExplore={handleExploreScroll}
           secretLocationRevealed={event.isSecretLocationRevealed}
