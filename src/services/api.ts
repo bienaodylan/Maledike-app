@@ -154,7 +154,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const result = await res.json();
+    const result = await readApiJson(res);
     if (result.success && result.user) {
       localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
     }
