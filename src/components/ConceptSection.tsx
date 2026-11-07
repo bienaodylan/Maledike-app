@@ -9,7 +9,7 @@ interface ConceptSectionProps {
 
 export const ConceptSection: React.FC<ConceptSectionProps> = ({ onOpenBooking, conciergePhone }) => {
   return (
-    <section id="concept" className="relative py-16 sm:py-24 px-4 sm:px-8">
+    <section id="concept" className="relative py-8 sm:py-24 px-4 sm:px-8">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="mb-12 text-center">
