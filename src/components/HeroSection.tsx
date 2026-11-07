@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Calendar, Clock, MapPin, Ticket, ChevronDown, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, MapPin, Ticket, ChevronDown, ChevronLeft, ChevronRight, ShieldCheck } from 'lucide-react';
 import { EventConfig } from '../types';
 
 interface HeroSectionProps {
   event: EventConfig & { remainingCount: number };
   flyerUrl: string;
+  heroImages?: string[];
   onOpenBooking: () => void;
   onExplore: () => void;
   secretLocationRevealed: boolean;
@@ -15,11 +16,21 @@ interface HeroSectionProps {
 export const HeroSection: React.FC<HeroSectionProps> = ({
   event,
   flyerUrl,
+  heroImages = [],
   onOpenBooking,
   onExplore,
   secretLocationRevealed,
   secretAddress,
 }) => {
+  const slides = Array.from(new Set([flyerUrl, ...heroImages].filter(Boolean)));
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  useEffect(() => {
+    if (slides.length < 2) return;
+    const timer = setInterval(() => setActiveSlide(index => (index + 1) % slides.length), 6000);
+    return () => clearInterval(timer);
+  }, [slides.length]);
+
   // Live Countdown logic to November 28, 2026 23:00
   const [timeLeft, setTimeLeft] = useState({
     days: 0,
@@ -230,14 +241,22 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               {/* Poster Container : format d'affiche élégant sans rognage */}
               <div className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden glass-smoked border border-white/20 shadow-2xl group flex items-center justify-center bg-black/50 p-2 sm:p-2.5">
                 <img
-                  src={flyerUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'}
-                  alt="Affiche Officielle MALEDIKE PARTY"
-                  className="w-full h-auto max-h-[560px] object-contain rounded-xl sm:rounded-2xl transition-transform duration-700 group-hover:scale-[1.02]"
+                  key={slides[activeSlide] || flyerUrl}
+                  src={slides[activeSlide] || flyerUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'}
+                  alt={`Visuel MALEDIKE PARTY ${activeSlide + 1}`}
+                  className="w-full h-auto max-h-[560px] object-contain rounded-xl sm:rounded-2xl transition-all duration-700"
                   loading="eager"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg';
                   }}
                 />
+                {slides.length > 1 && <>
+                  <button type="button" aria-label="Image précédente" onClick={() => setActiveSlide(i => (i - 1 + slides.length) % slides.length)} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/65 hover:bg-black/90 text-white p-2 border border-white/20"><ChevronLeft className="w-5 h-5"/></button>
+                  <button type="button" aria-label="Image suivante" onClick={() => setActiveSlide(i => (i + 1) % slides.length)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/65 hover:bg-black/90 text-white p-2 border border-white/20"><ChevronRight className="w-5 h-5"/></button>
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2">
+                    {slides.map((_, i) => <button key={i} type="button" aria-label={`Afficher l’image ${i + 1}`} onClick={() => setActiveSlide(i)} className={`h-2.5 rounded-full transition-all ${i === activeSlide ? 'w-7 bg-emerald-400' : 'w-2.5 bg-white/60 hover:bg-white'}`}/>)}
+                  </div>
+                </>}
               </div>
             </motion.div>
           </div>
