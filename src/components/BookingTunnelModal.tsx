@@ -656,10 +656,10 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-2 flex items-center justify-between gap-3">
+              <div className="pt-2 flex items-stretch gap-2 sm:gap-3">
                 <button
                   onClick={() => setStep(1)}
-                  className="px-3.5 sm:px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white/80 hover:text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                  className="flex-1 min-w-0 px-2 sm:px-4 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-white/80 hover:text-white text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   <span>Retour</span>
@@ -690,11 +690,11 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                   <select
                     value={selectedCountryCode}
                     onChange={e => setSelectedCountryCode(e.target.value)}
-                    className="bg-black/70 border border-white/20 rounded-xl px-2.5 sm:px-3 py-2.5 sm:py-3 text-xs font-bold text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    className="w-[94px] sm:w-auto shrink-0 bg-black/70 border border-white/20 rounded-xl px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
                   >
                     {COUNTRY_CODES.map(c => (
                       <option key={c.code} value={c.code} className="bg-neutral-900 text-white">
-                        {c.flag} {c.code} ({c.country})
+                        {c.flag} {c.code}
                       </option>
                     ))}
                   </select>
@@ -704,7 +704,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                     placeholder="Entrez votre numéro de compte (ex: 07 08 09 10 11)"
                     value={paymentPhone}
                     onChange={e => setPaymentPhone(e.target.value)}
-                    className="flex-1 bg-black/70 border border-white/20 rounded-xl px-3.5 sm:px-4 py-2.5 sm:py-3 text-sm font-semibold text-white placeholder-white/40 focus:outline-none focus:border-emerald-500"
+                    className="flex-1 min-w-0 w-0 bg-black/70 border border-white/20 rounded-xl px-2.5 sm:px-4 py-2.5 sm:py-3 text-sm font-semibold text-white placeholder-white/40 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -736,13 +736,13 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
               </div>
 
               {/* Infoline Help note for other methods */}
-              <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between text-[11px] text-white/70">
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-white/70">
                 <span>Autre moyen ou assistance ? Service client :</span>
                 <a
                   href="https://wa.me/2250758988360?text=Bonjour%20Mireza%20Caribbean,%20je%20souhaite%20r%C3%A9server%20pour%20la%20Maledike%20Party."
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-pink-400 hover:text-pink-300 font-extrabold flex items-center gap-1 cursor-pointer"
+                  className="text-pink-400 hover:text-pink-300 font-extrabold flex items-center gap-1 cursor-pointer whitespace-nowrap"
                 >
                   <Phone className="w-3.5 h-3.5" />
                   <span>07 58 98 83 60</span>
@@ -750,7 +750,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
               </div>
 
               {/* Security Seal */}
-              <div className="p-3 rounded-xl bg-black/60 border border-white/10 flex items-center justify-between text-[10px] sm:text-[11px] text-white/60">
+              <div className="p-3 rounded-xl bg-black/60 border border-white/10 flex flex-wrap items-center justify-between gap-2 text-[10px] sm:text-[11px] text-white/60">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span>Passerelle chiffrée SSL 256 bits (Wave Mobile Money)</span>
@@ -776,11 +776,11 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                 <button
                   onClick={handleExecutePayment}
                   disabled={isProcessing}
-                  className="flex-1 glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xl disabled:opacity-50"
+                  className="flex-1 min-w-0 glass-emerald-btn py-3.5 px-2 rounded-xl text-black font-extrabold text-[11px] sm:text-sm uppercase tracking-wide sm:tracking-wider flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer shadow-xl disabled:opacity-50"
                 >
                   <Lock className="w-4 h-4 text-black" />
                   <span>
-                    {isProcessing ? 'Création de la transaction...' : `Payer avec Wave (${totalAmount.toLocaleString()} FCFA)`}
+                    {isProcessing ? 'Création de la transaction...' : `Wave · ${totalAmount.toLocaleString()} FCFA`}
                   </span>
                 </button>
               </div>
