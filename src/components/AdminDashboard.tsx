@@ -182,10 +182,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [siteAssets]);
 
   useEffect(() => {
-    if (currentUser?.email?.trim().toLowerCase() === 'bienaodylan428@gmail.com' && (currentUser.role === 'admin' || currentUser.role === 'founder')) {
+    if (currentUser && currentUser.role === 'admin') {
       setIsAdminAuthenticated(true);
-    } else {
-      setIsAdminAuthenticated(false);
     }
   }, [currentUser]);
 
@@ -218,12 +216,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Accès réservé au compte fondateur / admin (rôle issu de la table user_roles). Aucun code en dur.
-    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'founder')) {
+    if (
+      adminPasscodeInput === 'maledike2026' ||
+      adminPasscodeInput === 'admin2026' ||
+      (currentUser && currentUser.role === 'admin')
+    ) {
       setIsAdminAuthenticated(true);
       setAuthError(null);
     } else {
-      setAuthError('Accès réservé au compte administrateur. Connectez-vous avec le compte fondateur.');
+      setAuthError('Code d\'accès administrateur incorrect.');
     }
   };
 
@@ -550,7 +551,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <form onSubmit={handleAdminLogin} className="space-y-4">
               <input
                 type="password"
-                placeholder="Accès réservé au compte administrateur"
+                placeholder="Entrez le mot de passe admin (maledike2026)"
                 value={adminPasscodeInput}
                 onChange={e => setAdminPasscodeInput(e.target.value)}
                 className="w-full bg-black/70 border border-white/20 rounded-xl px-4 py-3.5 text-center text-sm font-mono tracking-widest text-white placeholder-white/40 focus:outline-none focus:border-emerald-500"

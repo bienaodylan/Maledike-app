@@ -206,7 +206,7 @@ export const MobileDrawer: React.FC<MobileDrawerProps> = ({
                 <span>RÉSERVER MON BILLET (10 000 F)</span>
               </button>
 
-              {currentUser && currentUser.email?.trim().toLowerCase() === 'bienaodylan428@gmail.com' && (currentUser.role === 'admin' || currentUser.role === 'founder') && (
+              {currentUser && (currentUser.role === 'admin' || currentUser.email?.toLowerCase() === 'bienaodylan428@gmail.com') && (
                 <button
                   onClick={() => {
                     onClose();

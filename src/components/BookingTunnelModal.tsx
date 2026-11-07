@@ -351,19 +351,21 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
         throw new Error(errorText);
       }
 
-      const targetCheckoutUrl = initRes.checkoutUrl || initRes.session?.checkoutUrl;
-      const appRedirectUrl = targetCheckoutUrl || getOperatorAppRedirectUrl(selectedPaymentMethod);
-
-      setCheckoutUrl(appRedirectUrl);
-
-      // Redirection directe vers l'application officielle de l'opérateur
-      try {
-        const opened = window.open(appRedirectUrl, '_blank', 'noopener,noreferrer');
-        if (!opened || opened.closed || typeof opened.closed === 'undefined') {
-          window.location.href = appRedirectUrl;
+      // Déclenchement de l'application Wave directement sur smartphone sans quitter notre site
+      if (typeof window !== 'undefined') {
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isMobile) {
+          try {
+            const waveLink = document.createElement('a');
+            waveLink.href = 'wave://';
+            waveLink.style.display = 'none';
+            document.body.appendChild(waveLink);
+            waveLink.click();
+            setTimeout(() => {
+              try { document.body.removeChild(waveLink); } catch {}
+            }, 500);
+          } catch {}
         }
-      } catch {
-        window.location.href = appRedirectUrl;
       }
 
       if (initRes.session?.env) {
@@ -438,6 +440,7 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
     setPaymentStatus('checking');
     setErrorMessage(null);
     try {
+      // 1. Check order status first
       const statusRes = await api.checkOrderStatus(currentOrder.id);
       if (statusRes.status === 'completed' && statusRes.tickets && statusRes.tickets.length > 0) {
         if (pollTimerRef.current) clearInterval(pollTimerRef.current);
@@ -451,12 +454,30 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
           origin: { y: 0.6 },
           colors: ['#10b981', '#ec4899', '#ffffff'],
         });
+        return;
       } else if (statusRes.status === 'failed' || statusRes.status === 'cancelled') {
         setPaymentStatus('failed');
         setErrorMessage('La transaction a été rejetée ou annulée par l\'opérateur.');
+        return;
+      }
+
+      // 2. Si l'utilisateur confirme qu'il a déjà validé sur Wave, finaliser la commande
+      const confirmRes = await api.confirmPayment(currentOrder.id);
+      if (confirmRes.success && confirmRes.tickets && confirmRes.tickets.length > 0) {
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+        setIssuedTickets(confirmRes.tickets);
+        setPaymentStatus('completed');
+        setStep(5);
+
+        confetti({
+          particleCount: 90,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ['#10b981', '#ec4899', '#ffffff'],
+        });
       } else {
         setPaymentStatus('pending');
-        setErrorMessage('Paiement non encore détecté. Si vous venez de valider sur le portail opérateur, patientez quelques instants.');
+        setErrorMessage(confirmRes.error || 'Paiement non encore détecté. Veuillez valider le débit sur votre application Wave.');
       }
     } catch (err: any) {
       setPaymentStatus('pending');

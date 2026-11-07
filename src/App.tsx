@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './services/api';
-import { supabase } from './services/supabase';
 import { EventConfig, SiteAssets, UserProfile, TicketCategory } from './types';
 import { Navbar } from './components/Navbar';
 import { MobileDrawer } from './components/MobileDrawer';
@@ -68,13 +67,7 @@ export default function App() {
     // Load initial data
     api.getEvent().then(data => setEvent(data));
     api.getSiteAssets().then(data => setSiteAssets(data));
-    // Affichage immédiat depuis le cache, puis validation de la vraie session Supabase
     setCurrentUser(api.getSavedUser());
-    api.restoreSession().then(user => setCurrentUser(user));
-    const { data: authListener } = supabase.auth.onAuthStateChange(event => {
-      // Pas d'appel Supabase ici (risque de blocage) : on réagit uniquement à la déconnexion
-      if (event === 'SIGNED_OUT') setCurrentUser(null);
-    });
 
     // Check URL routing for Admin or Scanner Agent
     const checkRoute = () => {
@@ -91,7 +84,6 @@ export default function App() {
       }
 
       if (hash === '#admin' || path === '/admin') {
-        // Keep direct admin URLs private: founder email must be authenticated.
         setIsAdminOpen(true);
       }
 
@@ -113,7 +105,6 @@ export default function App() {
     return () => {
       window.removeEventListener('hashchange', checkRoute);
       window.removeEventListener('popstate', checkRoute);
-      authListener.subscription.unsubscribe();
     };
   }, []);
 
@@ -169,18 +160,6 @@ export default function App() {
 
   // Standalone Full-Page Admin Dashboard (Page dédiée et non bloc modal)
   if (isAdminOpen) {
-    if (!currentUser || currentUser.email?.trim().toLowerCase() !== 'bienaodylan428@gmail.com' || currentUser.role !== 'admin' && currentUser.role !== 'founder') {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-[#0a0710] text-white p-6">
-          <div className="max-w-md text-center rounded-2xl border border-white/10 bg-white/5 p-8">
-            <h1 className="text-2xl font-bold mb-3">Accès réservé</h1>
-            <p className="text-white/70 mb-6">Le portail administrateur est strictement réservé au compte fondateur.</p>
-            {!currentUser ? <button onClick={() => { setIsAdminOpen(false); setIsAuthOpen(true); }} className="px-5 py-3 rounded-xl bg-emerald-500 text-black font-bold">Se connecter</button> : null}
-            <button onClick={() => { setIsAdminOpen(false); window.location.hash=''; window.history.pushState({}, '', '/'); }} className="block mx-auto mt-4 text-white/60">Retour au site</button>
-          </div>
-        </div>
-      );
-    }
     return (
       <AdminDashboard
         isOpen={true}

@@ -234,19 +234,6 @@ export const AgentScannerView: React.FC<AgentScannerViewProps> = ({
           ...prev.slice(0, 19),
         ]);
       }
-      // Reload the authoritative database history so every scanner shares the same timeline.
-      const sharedLogs = await api.getScannerHistory(token);
-      if (Array.isArray(sharedLogs)) {
-        setRecentScans(sharedLogs.map((l: any) => ({
-          id: l.id,
-          time: new Date(l.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          success: l.action === 'TICKET_CHECKED_IN',
-          attendeeName: l.details?.attendeeName || 'Visiteur',
-          ticketNumber: l.details?.ticketNumber || l.details?.rawInput || 'MLDK',
-          status: l.action === 'TICKET_CHECKED_IN' ? 'VALIDÉ' : l.action === 'DUPLICATE_SCAN_REJECTED' ? 'DOUBLON REFUSÉ' : l.action === 'INVALID_TICKET_SCANNED' ? 'INTROUVABLE' : 'REFUSÉ',
-          note: l.details?.alreadyCheckedInAt ? `Déjà scanné à ${new Date(l.details.alreadyCheckedInAt).toLocaleTimeString('fr-FR')}` : undefined,
-        })));
-      }
     } catch (err: any) {
       playBeep('error');
       setScanResult({

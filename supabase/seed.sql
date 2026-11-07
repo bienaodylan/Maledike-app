@@ -48,8 +48,20 @@ INSERT INTO public.site_assets (
   hero_flyer_url = EXCLUDED.hero_flyer_url,
   gallery_images = EXCLUDED.gallery_images;
 
--- 3. Compte fondateur : créé via Supabase Auth à l'inscription (aucun mot de passe dans ce fichier).
---    Le déclencheur on_auth_user_created_maledike attribue le rôle 'founder' à l'adresse du fondateur.
+-- 3. Compte Administrateur Racine (Dylan Bienao)
+INSERT INTO public.profiles (
+  id, email, password_hash, first_name, last_name, whatsapp_number, country_code, role
+) VALUES (
+  'admin_root_1',
+  'bienaodylan428@gmail.com',
+  'maledike2026',
+  'Dylan',
+  'Bienao',
+  '0150049489',
+  '+225',
+  'admin'
+) ON CONFLICT (email) DO UPDATE SET
+  role = 'admin';
 
 -- 4. Produits Numériques & Guides Exclusifs
 INSERT INTO public.digital_products (

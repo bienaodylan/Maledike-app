@@ -18,9 +18,6 @@ import {
   OperatorSalesData,
 } from '../types';
 
-import type { User } from '@supabase/supabase-js';
-import { supabase } from './supabase';
-
 const API_BASE = '/api';
 
 const STORAGE_KEYS = {
@@ -29,89 +26,6 @@ const STORAGE_KEYS = {
   SPLASH_DISMISSED: 'maledike_splash_dismissed',
   SCANNER_TOKEN: 'maledike_agent_scanner_token',
 };
-
-/**
- * Lecture JSON tolérante : une réponse vide ou non-JSON (ex. route /api absente,
- * page HTML) ne lève plus "Unexpected end of JSON input" ; elle devient une erreur lisible.
- */
-async function parseJson<T = any>(res: Response): Promise<T> {
-  const text = await res.text();
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return {
-      success: false,
-      error: `Le service est momentanément indisponible (code ${res.status}). Réessayez dans quelques instants.`,
-    } as unknown as T;
-  }
-}
-
-/** Traduit une erreur Supabase Auth en message clair pour le client. */
-function translateAuthError(err: { message?: string; code?: string; status?: number } | null | undefined): string {
-  if (!err) return 'Une erreur est survenue. Réessayez.';
-  const code = (err.code || '').toLowerCase();
-  const msg = (err.message || '').toLowerCase();
-
-  if (code === 'user_already_exists' || msg.includes('already registered')) {
-    return 'Un compte avec cette adresse email existe déjà. Connectez-vous.';
-  }
-  if (code === 'invalid_credentials' || msg.includes('invalid login credentials')) {
-    return 'Email ou mot de passe incorrect.';
-  }
-  if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) {
-    return 'Adresse email non confirmée. Cliquez sur le lien reçu par email, puis connectez-vous.';
-  }
-  if (code === 'weak_password' || msg.includes('password should') || msg.includes('weak password')) {
-    return 'Mot de passe trop faible : choisissez-en un plus long, avec des lettres et des chiffres.';
-  }
-  if (code === 'email_address_invalid' || msg.includes('invalid format') || msg.includes('unable to validate email')) {
-    return 'Adresse email invalide.';
-  }
-  if (code === 'signup_disabled' || msg.includes('signups not allowed')) {
-    return 'Les inscriptions sont momentanément fermées.';
-  }
-  if (code.includes('rate_limit') || msg.includes('rate limit') || err.status === 429) {
-    return 'Trop de tentatives. Patientez quelques minutes avant de réessayer.';
-  }
-  if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('load failed')) {
-    return 'Connexion au serveur impossible. Vérifiez votre connexion internet et réessayez.';
-  }
-  return err.message || 'Une erreur est survenue. Réessayez.';
-}
-
-/** Construit le profil applicatif depuis l'utilisateur Supabase + tables profiles / user_roles. */
-async function loadUserProfile(user: User): Promise<UserProfile> {
-  const [profileRes, roleRes] = await Promise.all([
-    supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
-    supabase.from('user_roles').select('role').eq('user_id', user.id).maybeSingle(),
-  ]);
-
-  const profile: any = profileRes.data || {};
-  const meta: any = user.user_metadata || {};
-  const rawRole = (roleRes.data as any)?.role;
-
-  const founderEmail = 'bienaodylan428@gmail.com';
-  const isFounder = (user.email || '').trim().toLowerCase() === founderEmail;
-  return {
-    id: user.id,
-    email: user.email || profile.email || '',
-    firstName: profile.first_name || meta.firstName || '',
-    lastName: profile.last_name || meta.lastName || '',
-    whatsappNumber: profile.whatsapp_number || meta.whatsappNumber || '',
-    countryCode: profile.country_code || meta.countryCode || '+225',
-    // Only the founder's exact verified Supabase email can ever receive admin UI role.
-    role: isFounder && (rawRole === 'founder' || rawRole === 'admin') ? 'admin' : 'user',
-    createdAt: profile.created_at || user.created_at,
-  };
-}
-
-function cacheUser(user: UserProfile): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
-  } catch {
-    /* stockage indisponible (navigation privée) : la session Supabase reste valable */
-  }
-}
 
 export const api = {
   // 1. Event
@@ -148,7 +62,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   // 2. Site Assets
@@ -179,7 +93,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(assets),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   async uploadImage(file: File): Promise<{ success: boolean; url?: string; fileName?: string; error?: string }> {
@@ -193,7 +107,7 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fileData, fileName: file.name }),
           });
-          const json = await parseJson(res);
+          const json = await res.json();
           resolve(json);
         } catch (err: any) {
           resolve({ success: false, error: err.message || 'Erreur réseau lors du téléversement' });
@@ -215,77 +129,29 @@ export const api = {
     whatsappNumber: string;
     countryCode?: string;
   }): Promise<{ success: boolean; user?: UserProfile; error?: string }> {
-    try {
-      const email = data.email.trim().toLowerCase();
-      const countryCode = data.countryCode || '+225';
-
-      const { data: signUp, error } = await supabase.auth.signUp({
-        email,
-        password: data.password,
-        options: {
-          // Lues par le déclencheur SQL qui crée le profil et le rôle (fondateur = admin automatique)
-          data: {
-            firstName: data.firstName.trim(),
-            lastName: data.lastName.trim(),
-            whatsappNumber: data.whatsappNumber.trim(),
-            countryCode,
-          },
-        },
-      });
-
-      if (error) return { success: false, error: translateAuthError(error) };
-
-      // Quand la confirmation email est active, Supabase renvoie un faux utilisateur sans identité
-      // si l'adresse est déjà inscrite (pas d'erreur explicite).
-      if (signUp.user && Array.isArray(signUp.user.identities) && signUp.user.identities.length === 0) {
-        return { success: false, error: 'Un compte avec cette adresse email existe déjà. Connectez-vous.' };
-      }
-
-      let sessionUser: User | null = signUp.session?.user ?? null;
-
-      // Pas de session immédiate : on connecte directement le nouveau compte.
-      if (!sessionUser) {
-        const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password: data.password,
-        });
-        if (signInError) {
-          const needsConfirmation =
-            (signInError.code || '').toLowerCase() === 'email_not_confirmed' ||
-            (signInError.message || '').toLowerCase().includes('email not confirmed');
-          if (needsConfirmation) {
-            return {
-              success: false,
-              error: 'Compte créé. Confirmez votre adresse email via le lien reçu, puis connectez-vous.',
-            };
-          }
-          return { success: false, error: translateAuthError(signInError) };
-        }
-        sessionUser = signIn.user;
-      }
-
-      const user = await loadUserProfile(sessionUser);
-      cacheUser(user);
-      return { success: true, user };
-    } catch (err: any) {
-      return { success: false, error: translateAuthError(err) };
+    const res = await fetch(`${API_BASE}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    if (result.success && result.user) {
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
     }
+    return result;
   },
 
   async login(email: string, password: string): Promise<{ success: boolean; user?: UserProfile; error?: string }> {
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-      if (error || !data.user) return { success: false, error: translateAuthError(error) };
-
-      const user = await loadUserProfile(data.user);
-      cacheUser(user);
-      return { success: true, user };
-    } catch (err: any) {
-      return { success: false, error: translateAuthError(err) };
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const result = await res.json();
+    if (result.success && result.user) {
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
     }
+    return result;
   },
 
   getSavedUser(): UserProfile | null {
@@ -297,104 +163,81 @@ export const api = {
     }
   },
 
-  /** Recharge la session Supabase au démarrage ; nettoie le cache local si elle a expiré. */
-  async restoreSession(): Promise<UserProfile | null> {
-    try {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session?.user) {
-        localStorage.removeItem(STORAGE_KEYS.USER);
-        return null;
-      }
-      const user = await loadUserProfile(data.session.user);
-      cacheUser(user);
-      return user;
-    } catch {
-      return api.getSavedUser();
-    }
-  },
-
   logoutUser(): void {
-    try {
-      localStorage.removeItem(STORAGE_KEYS.USER);
-    } catch {
-      /* ignore */
-    }
-    supabase.auth.signOut().catch(() => {});
+    localStorage.removeItem(STORAGE_KEYS.USER);
   },
 
-  async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile; error?: string }> {
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const authUser = sessionData.session?.user;
-      if (!authUser || authUser.id !== userId) {
-        return { success: false, error: 'Session expirée. Reconnectez-vous.' };
-      }
-
-      const updates: Record<string, string> = { updated_at: new Date().toISOString() };
-      if (data.firstName !== undefined) updates.first_name = data.firstName.trim();
-      if (data.lastName !== undefined) updates.last_name = data.lastName.trim();
-      if (data.whatsappNumber !== undefined) updates.whatsapp_number = data.whatsappNumber.trim();
-      if (data.countryCode !== undefined) updates.country_code = data.countryCode.trim();
-
-      const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
-      if (error) return { success: false, error: 'Impossible d\'enregistrer le profil. Réessayez.' };
-
-      const user = await loadUserProfile(authUser);
-      cacheUser(user);
-      return { success: true, user };
-    } catch (err: any) {
-      return { success: false, error: translateAuthError(err) };
+  async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {
+    const res = await fetch(`${API_BASE}/auth/update-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, ...data }),
+    });
+    const result = await res.json();
+    if (result.success && result.user) {
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
     }
+    return result;
   },
 
   // 4. Orders & Genius Pay Real Gateway
   async createOrder(data: {
-    userId: string; buyerName: string; buyerEmail: string; buyerWhatsApp: string; countryCode: string;
-    quantity: number; digitalProductIds?: string[]; category?: TicketCategory; categoryName?: string;
+    userId: string;
+    buyerName: string;
+    buyerEmail: string;
+    buyerWhatsApp: string;
+    countryCode: string;
+    quantity: number;
+    digitalProductIds?: string[];
+    category?: TicketCategory;
+    categoryName?: string;
   }): Promise<{ success: boolean; order?: Order; error?: string; geniusPayPublicKey?: string; env?: string }> {
-    try {
-      const { data: result, error } = await supabase.functions.invoke('create-order', { body: data });
-      if (error) return { success: false, error: error.message || 'Impossible de créer la réservation.' };
-      return result || { success: false, error: 'Réponse invalide du service de réservation.' };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Connexion au service de réservation impossible.' };
-    }
+    const res = await fetch(`${API_BASE}/orders/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
   },
 
   async initiateGeniusPayPayment(data: {
-    orderId: string; paymentMethod: PaymentProvider; paymentPhone: string; countryCode: string;
+    orderId: string;
+    paymentMethod: PaymentProvider;
+    paymentPhone: string;
+    countryCode: string;
   }): Promise<{ success: boolean; session?: any; checkoutUrl?: string; error?: string }> {
-    try {
-      const { data: result, error } = await supabase.functions.invoke('geniuspay-initiate', { body: data });
-      if (error) return { success: false, error: error.message || 'Initialisation du paiement impossible.' };
-      return result || { success: false, error: 'Réponse invalide de la passerelle de paiement.' };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Connexion à la passerelle de paiement impossible.' };
-    }
+    const res = await fetch(`${API_BASE}/payments/geniuspay/initiate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
   },
 
   async checkOrderStatus(orderId: string): Promise<{
     status: 'pending' | 'completed' | 'failed' | 'cancelled';
-    order?: Order; tickets?: Ticket[]; digitalPurchases?: UserDigitalPurchase[]; expiresInSeconds?: number;
+    order?: Order;
+    tickets?: Ticket[];
+    digitalPurchases?: UserDigitalPurchase[];
+    expiresInSeconds?: number;
   }> {
-    try {
-      const { data: order, error } = await supabase.from('orders').select('*').eq('id', orderId).single();
-      if (error || !order) return { status: 'failed' };
-      const { data: tickets } = await supabase.from('tickets').select('*').eq('order_id', orderId);
-      return { status: order.status, order: {
-        id: order.id, userId: order.user_id, buyerName: order.buyer_name, buyerEmail: order.buyer_email,
-        buyerWhatsApp: order.buyer_whatsapp, countryCode: order.country_code, quantity: order.quantity,
-        unitPrice: order.unit_price, totalAmount: order.total_amount, currency: order.currency,
-        paymentMethod: order.payment_method, paymentPhone: order.payment_phone, transactionReference: order.transaction_reference,
-        checkoutUrl: order.checkout_url, status: order.status, reservationExpiresAt: Date.parse(order.reservation_expires_at),
-        createdAt: order.created_at, completedAt: order.completed_at, digitalProductIds: order.digital_product_ids || [],
-      }, tickets: (tickets || []).map((t:any)=>({id:t.id,ticketNumber:t.ticket_number,orderId:t.order_id,userId:t.user_id,attendeeName:t.attendee_name,attendeeEmail:t.attendee_email,attendeePhone:t.attendee_phone,eventTitle:t.event_title,eventDate:t.event_date,eventTime:t.event_time,price:t.price,qrTokenHash:t.qr_token_hash,status:t.status,createdAt:t.created_at,checkedInAt:t.checked_in_at,checkedInByAgent:t.checked_in_by_agent})) };
-    } catch { return { status: 'failed' }; }
+    const res = await fetch(`${API_BASE}/payments/status/${encodeURIComponent(orderId)}`);
+    return res.json();
   },
 
-  async confirmPayment(orderId: string, transactionId?: string): Promise<{success:boolean;error?:string}> {
-    // Payment confirmation must come exclusively from the signed GeniusPay webhook.
-    return { success: false, error: "La confirmation du paiement est automatique et sécurisée. Attendez le retour GeniusPay." };
+  async confirmPayment(orderId: string, transactionId?: string): Promise<{
+    success: boolean;
+    order?: Order;
+    tickets?: Ticket[];
+    digitalPurchases?: UserDigitalPurchase[];
+    error?: string;
+  }> {
+    const res = await fetch(`${API_BASE}/orders/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId, transactionId }),
+    });
+    return res.json();
   },
 
   // 5. Digital Products
@@ -414,32 +257,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   async getMyDigitalPurchases(userId: string): Promise<UserDigitalPurchase[]> {
     try {
-      // RLS : chaque utilisateur ne voit que ses propres achats
-      const { data, error } = await supabase
-        .from('user_digital_purchases')
-        .select('*')
-        .eq('user_id', userId)
-        .order('purchased_at', { ascending: false });
-      if (error || !data) return [];
-      return data.map((p: any) => ({
-        id: p.id,
-        orderId: p.order_id,
-        userId: p.user_id,
-        productId: p.product_id,
-        productTitle: p.product_title,
-        format: p.format,
-        fileName: p.file_name,
-        fileUrl: p.file_url,
-        downloadToken: p.download_token,
-        purchasedAt: p.purchased_at,
-      }));
+      const res = await fetch(`${API_BASE}/digital-products/mine?userId=${encodeURIComponent(userId)}`);
+      if (res.ok) return await res.json();
     } catch (e) {
-      console.warn('getMyDigitalPurchases error', e);
+      console.warn('API getMyDigitalPurchases fallback', e);
     }
     return [];
   },
@@ -450,56 +276,8 @@ export const api = {
     secretLocationRevealed: boolean;
     secretLocationAddress: string | null;
   }> {
-    try {
-      // RLS : chaque utilisateur ne voit que ses propres billets
-      const { data, error } = await supabase
-        .from('tickets')
-        .select('*')
-        .eq('user_id', userId)
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false });
-
-      const tickets: Ticket[] = error || !data
-        ? []
-        : data.map((t: any) => ({
-            id: t.id,
-            ticketNumber: t.ticket_number,
-            orderId: t.order_id,
-            userId: t.user_id,
-            attendeeName: t.attendee_name,
-            attendeeEmail: t.attendee_email,
-            attendeePhone: t.attendee_phone,
-            eventTitle: t.event_title,
-            eventDate: t.event_date,
-            eventTime: t.event_time,
-            price: t.price,
-            qrTokenHash: t.qr_token_hash,
-            status: t.status,
-            checkedInAt: t.checked_in_at || undefined,
-            checkedInByAgent: t.checked_in_by_agent || undefined,
-            createdAt: t.created_at,
-            category: t.category || 'pass_vip',
-            categoryName: t.category_name || 'Passe-Entrée VIP',
-          }));
-
-      // L'adresse secrète n'est communiquée qu'aux détenteurs d'un billet, une fois révélée
-      let revealed = false;
-      let address: string | null = null;
-      if (tickets.length > 0) {
-        const { data: ev } = await supabase
-          .from('event_config')
-          .select('is_secret_location_revealed, secret_location_address')
-          .limit(1)
-          .maybeSingle();
-        revealed = Boolean(ev?.is_secret_location_revealed);
-        address = revealed ? ev?.secret_location_address ?? null : null;
-      }
-
-      return { tickets, secretLocationRevealed: revealed, secretLocationAddress: address };
-    } catch (e) {
-      console.warn('getMyTickets error', e);
-      return { tickets: [], secretLocationRevealed: false, secretLocationAddress: null };
-    }
+    const res = await fetch(`${API_BASE}/tickets/mine?userId=${encodeURIComponent(userId)}`);
+    return res.json();
   },
 
   async scanTicket(qrTokenHash: string): Promise<CheckInResult> {
@@ -508,14 +286,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ qrTokenHash }),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   // 7. Scanner Access Tokens
   async getScannerTokens(): Promise<ScannerToken[]> {
     const res = await fetch(`${API_BASE}/admin/scanner-tokens`);
-    const data = await parseJson<any>(res);
-    return Array.isArray(data) ? data : [];
+    return res.json();
   },
 
   async createScannerToken(agentName: string, gateName?: string): Promise<{ success: boolean; scannerToken?: ScannerToken }> {
@@ -524,7 +301,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentName, gateName }),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   async revokeScannerToken(tokenId: string): Promise<{ success: boolean }> {
@@ -533,7 +310,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tokenId }),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   async verifyScannerToken(token: string): Promise<{
@@ -547,26 +324,26 @@ export const api = {
     error?: string;
   }> {
     const res = await fetch(`${API_BASE}/scanner/verify-token/${encodeURIComponent(token)}`);
-    return parseJson(res);
+    return res.json();
   },
 
   async agentScanTicket(qrTokenHash: string, scannerToken: string): Promise<CheckInResult> {
-    const { data, error } = await supabase.rpc('maledike_agent_scan', {
-      p_code: qrTokenHash.trim(), p_scanner_token: scannerToken,
+    const res = await fetch(`${API_BASE}/tickets/agent-scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qrTokenHash, scannerToken }),
     });
-    if (error) throw new Error(error.message || 'Erreur de validation du billet');
-    return data as CheckInResult;
+    return res.json();
   },
 
   async getScannerHistory(token: string): Promise<any[]> {
     try {
-      const { data, error } = await supabase.rpc('maledike_scanner_history', { p_scanner_token: token });
-      if (error || !Array.isArray(data)) return [];
-      return data;
+      const res = await fetch(`${API_BASE}/scanner/history/${encodeURIComponent(token)}`);
+      if (res.ok) return await res.json();
     } catch (e) {
       console.warn('getScannerHistory error', e);
-      return [];
     }
+    return [];
   },
 
   // 8. Analytics & Admin
@@ -584,19 +361,17 @@ export const api = {
     recentOrders: Order[];
   }> {
     const res = await fetch(`${API_BASE}/admin/analytics`);
-    return parseJson(res);
+    return res.json();
   },
 
   async getAdminOrders(): Promise<Order[]> {
     const res = await fetch(`${API_BASE}/admin/orders`);
-    const data = await parseJson<any>(res);
-    return Array.isArray(data) ? data : [];
+    return res.json();
   },
 
   async getAdminTickets(): Promise<Ticket[]> {
     const res = await fetch(`${API_BASE}/admin/tickets`);
-    const data = await parseJson<any>(res);
-    return Array.isArray(data) ? data : [];
+    return res.json();
   },
 
   async cancelTicket(ticketId: string): Promise<{ success: boolean; ticket?: Ticket }> {
@@ -605,7 +380,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticketId }),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   async getGatewayConfig(): Promise<{
@@ -615,7 +390,7 @@ export const api = {
     webhookSecretConfigured: boolean;
   }> {
     const res = await fetch(`${API_BASE}/admin/gateway-config`);
-    return parseJson(res);
+    return res.json();
   },
 
   async updateGatewayConfig(config: Partial<GatewayConfig>): Promise<{ success: boolean; gatewayConfig?: GatewayConfig }> {
@@ -624,7 +399,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     });
-    return parseJson(res);
+    return res.json();
   },
 
   async purgeTestData(): Promise<{ success: boolean; purgedCount: number; remainingTickets: number }> {
@@ -632,7 +407,7 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
-    return parseJson(res);
+    return res.json();
   },
 
   // Splash Screen Session state

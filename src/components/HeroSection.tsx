@@ -70,7 +70,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.1 }}
-              className="text-[clamp(2.5rem,6.5vw,6.5rem)] font-black uppercase tracking-[-0.04em] text-white font-display leading-[0.95] drop-shadow-2xl max-w-full whitespace-nowrap"
+              className="text-4xl xs:text-5xl sm:text-6xl md:text-7xl xl:text-8xl font-black uppercase tracking-tight text-white font-display leading-[0.95] drop-shadow-2xl max-w-full break-words"
             >
               MALEDIKE
               <span className="block text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-rose-300 to-pink-500 font-black italic">
@@ -228,11 +228,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               <div className="absolute -inset-2 rounded-3xl bg-gradient-to-tr from-pink-500/30 via-emerald-500/20 to-purple-500/30 blur-2xl opacity-75" />
 
               {/* Poster Container : format d'affiche élégant sans rognage */}
-              <div className="relative w-full aspect-square rounded-2xl sm:rounded-3xl overflow-hidden glass-smoked border border-white/20 shadow-2xl group flex items-center justify-center bg-black/50 p-2 sm:p-2.5">
+              <div className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden glass-smoked border border-white/20 shadow-2xl group flex items-center justify-center bg-black/50 p-2 sm:p-2.5">
                 <img
                   src={flyerUrl || '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg'}
                   alt="Affiche Officielle MALEDIKE PARTY"
-                  className="w-full h-full aspect-square object-cover rounded-xl sm:rounded-2xl transition-transform duration-700 group-hover:scale-[1.02]"
+                  className="w-full h-auto max-h-[560px] object-contain rounded-xl sm:rounded-2xl transition-transform duration-700 group-hover:scale-[1.02]"
                   loading="eager"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = '/assets/aistudio/WhatsApp_Image_2026-11-01_at_11.15.47__1__04f6111a.jpeg';

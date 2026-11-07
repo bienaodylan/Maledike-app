@@ -62,7 +62,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Actions & Profile */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Admin shortcut button (only shown when administrator is logged in) */}
-          {currentUser && currentUser.email?.trim().toLowerCase() === 'bienaodylan428@gmail.com' && (currentUser.role === 'admin' || currentUser.role === 'founder') && (
+          {currentUser && (currentUser.role === 'admin' || currentUser.email?.toLowerCase() === 'bienaodylan428@gmail.com') && (
             <button
               onClick={onOpenAdmin}
               title="Panneau d'Administration"
