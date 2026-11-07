@@ -434,57 +434,6 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
     }, 2500);
   };
 
-  // Manual Check in Step 4
-  const handleManualCheckStatus = async () => {
-    if (!currentOrder) return;
-    setPaymentStatus('checking');
-    setErrorMessage(null);
-    try {
-      // 1. Check order status first
-      const statusRes = await api.checkOrderStatus(currentOrder.id);
-      if (statusRes.status === 'completed' && statusRes.tickets && statusRes.tickets.length > 0) {
-        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-        setIssuedTickets(statusRes.tickets);
-        setPaymentStatus('completed');
-        setStep(5);
-
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#10b981', '#ec4899', '#ffffff'],
-        });
-        return;
-      } else if (statusRes.status === 'failed' || statusRes.status === 'cancelled') {
-        setPaymentStatus('failed');
-        setErrorMessage('La transaction a été rejetée ou annulée par l\'opérateur.');
-        return;
-      }
-
-      // 2. Si l'utilisateur confirme qu'il a déjà validé sur Wave, finaliser la commande
-      const confirmRes = await api.confirmPayment(currentOrder.id);
-      if (confirmRes.success && confirmRes.tickets && confirmRes.tickets.length > 0) {
-        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-        setIssuedTickets(confirmRes.tickets);
-        setPaymentStatus('completed');
-        setStep(5);
-
-        confetti({
-          particleCount: 90,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#10b981', '#ec4899', '#ffffff'],
-        });
-      } else {
-        setPaymentStatus('pending');
-        setErrorMessage(confirmRes.error || 'Paiement non encore détecté. Veuillez valider le débit sur votre application Wave.');
-      }
-    } catch (err: any) {
-      setPaymentStatus('pending');
-      setErrorMessage(err.message || 'Erreur lors de la vérification.');
-    }
-  };
-
   const handleReset = () => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     setStep(1);
@@ -561,20 +510,9 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
 
         {/* Error Alert */}
         {errorMessage && (
-          <div className="mx-4 sm:mx-6 mt-3 sm:mt-4 p-3 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-              <span>{errorMessage}</span>
-            </div>
-            {step === 4 && (
-              <button
-                onClick={handleManualCheckStatus}
-                className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-[10px] font-bold text-white shrink-0 cursor-pointer flex items-center gap-1"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>Vérifier</span>
-              </button>
-            )}
+          <div className="mx-4 sm:mx-6 mt-3 sm:mt-4 p-3 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <span>{errorMessage}</span>
           </div>
         )}
 
@@ -893,16 +831,33 @@ export const BookingTunnelModal: React.FC<BookingTunnelModalProps> = ({
                 </p>
               </div>
 
-              {/* Action buttons */}
-              <div className="pt-3 max-w-sm mx-auto space-y-2.5">
+              {/* Live Status indicator */}
+              <div className="p-4 rounded-2xl bg-black/60 border border-[#1DC4FF]/30 max-w-sm mx-auto space-y-2 text-left shadow-lg shadow-[#1DC4FF]/10">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs font-black uppercase tracking-wider text-white">Validation automatique sécurisée</span>
+                </div>
+                <p className="text-[11px] text-white/70 leading-relaxed">
+                  Dès que vous confirmez le débit dans Wave sur votre téléphone, cette page se mettra à jour toute seule pour générer vos billets certifiés avec QR Code anti-fraude.
+                </p>
+              </div>
+
+              {/* Mobile app trigger & modify options */}
+              <div className="pt-2 max-w-sm mx-auto flex flex-col gap-2.5">
+                <a
+                  href="wave://"
+                  className="w-full py-3 px-4 rounded-xl bg-[#1DC4FF]/15 border border-[#1DC4FF]/30 hover:bg-[#1DC4FF]/25 text-[#1DC4FF] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Smartphone className="w-4 h-4" />
+                  <span>Basculer vers l'application Wave</span>
+                </a>
+
                 <button
                   type="button"
-                  onClick={handleManualCheckStatus}
-                  disabled={paymentStatus === 'checking'}
-                  className="w-full glass-emerald-btn py-3.5 px-6 rounded-xl text-black font-extrabold text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xl disabled:opacity-50"
+                  onClick={() => setStep(3)}
+                  className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white/80 text-xs font-semibold uppercase tracking-wider cursor-pointer transition-colors"
                 >
-                  <RefreshCw className={`w-4 h-4 ${paymentStatus === 'checking' ? 'animate-spin' : ''}`} />
-                  <span>J'ai déjà validé</span>
+                  Modifier le numéro ou la commande
                 </button>
               </div>
             </div>

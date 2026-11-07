@@ -682,23 +682,16 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     }
 
     if (!callRes.ok || !callRes.data) {
-      console.warn('Genius Pay API indisponible ou clé inactive, maintien de la transaction sur la plateforme:', callRes.errorText);
-      order.checkoutUrl = '';
-      saveDb(db);
-      return res.json({
-        success: true,
-        checkoutUrl: '',
-        session: {
-          transactionId: order.transactionReference,
-          amount: order.totalAmount,
-          currency: 'XOF',
-          orderId: order.id,
-          paymentMethod,
-          checkoutUrl: null,
-          gatewayConnected: false,
-          env: db.gatewayConfig.env,
-          publicKey: db.gatewayConfig.publicKey,
-        },
+      console.error('Erreur API Genius Pay en mode réel :', callRes.errorText);
+      const rawMsg = callRes.errorText || 'La passerelle de paiement a refusé la transaction.';
+      let friendlyError = String(rawMsg);
+      if (/invalid.*key|key.*invalid|unauthorized/i.test(friendlyError)) {
+        friendlyError = "Clé API GeniusPay invalide ou non configurée pour le mode réel. Rendez-vous dans le panneau d'administration pour renseigner vos clés réelles.";
+      }
+      return res.status(callRes.status >= 400 && callRes.status < 600 ? callRes.status : 400).json({
+        success: false,
+        error: friendlyError,
+        rawMessage: rawMsg,
       });
     }
 
@@ -931,6 +924,7 @@ app.post('/api/orders/confirm', async (req, res) => {
   }
 
   // 2. Interrogation directe de la passerelle pour vérifier l'authenticité
+  let isVerified = false;
   try {
     const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
     const gpRes = await fetch(`${gatewayUrl}/payments/${order.transactionReference}`, {
@@ -946,12 +940,14 @@ app.post('/api/orders/confirm', async (req, res) => {
       const gpData = await gpRes.json();
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
-      if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
+      if (gatewayStatus === 'success' || gatewayStatus === 'completed' || gatewayStatus === 'paid') {
+        isVerified = true;
+      } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
         order.status = 'failed';
         saveDb(db);
         return res.status(400).json({
           success: false,
-          error: 'Le paiement a été rejeté ou annulé par l\'opérateur.',
+          error: 'Le paiement a été rejeté ou annulé par l\'opérateur Wave.',
         });
       }
     }
@@ -959,23 +955,30 @@ app.post('/api/orders/confirm', async (req, res) => {
     console.warn('Vérification passerelle:', err.message);
   }
 
-  // Finalisation et émission immédiate des billets officiels cryptés
-  fulfillOrder(order);
-  db.auditLogs.push({
-    id: 'log_conf_' + Date.now(),
-    action: 'ORDER_CONFIRMED_CLIENT',
-    details: { orderId: order.id, amount: order.totalAmount, reference: order.transactionReference },
-    timestamp: new Date().toISOString(),
-  });
-  saveDb(db);
+  if (isVerified) {
+    fulfillOrder(order);
+    db.auditLogs.push({
+      id: 'log_conf_' + Date.now(),
+      action: 'ORDER_CONFIRMED_GATEWAY_CERTIFIED',
+      details: { orderId: order.id, amount: order.totalAmount, reference: order.transactionReference },
+      timestamp: new Date().toISOString(),
+    });
+    saveDb(db);
 
-  const tickets = db.tickets.filter(t => t.orderId === orderId);
-  const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
-  return res.json({
-    success: true,
-    order,
-    tickets,
-    digitalPurchases,
+    const tickets = db.tickets.filter(t => t.orderId === orderId);
+    const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
+    return res.json({
+      success: true,
+      order,
+      tickets,
+      digitalPurchases,
+    });
+  }
+
+  // SÉCURITÉ ABSOLUE : Si non validé par la passerelle officielle, AUCUN BILLET N'EST ÉMIS !
+  return res.status(400).json({
+    success: false,
+    error: 'Paiement non confirmé. La transaction n\'a pas encore été validée sur votre application Wave.',
   });
 });
 
@@ -1339,21 +1342,15 @@ app.post('/api/admin/gateway-config', (req, res) => {
 app.post('/api/admin/purge-test-data', (_req, res) => {
   db = readDb();
   const beforeCount = db.tickets.length;
-  const isTest = (item: any) =>
-    item.id?.includes('seed') ||
-    item.orderId?.includes('seed') ||
-    item.transactionReference?.includes('SEED') ||
-    item.buyerEmail === 'test@test.com';
-
-  db.orders = db.orders.filter(o => !isTest(o));
-  db.tickets = db.tickets.filter(t => !isTest(t));
-  db.auditLogs = db.auditLogs.filter(l => !isTest(l));
+  db.orders = [];
+  db.tickets = [];
+  db.auditLogs = [];
 
   saveDb(db);
   res.json({
     success: true,
-    purgedCount: beforeCount - db.tickets.length,
-    remainingTickets: db.tickets.length,
+    purgedCount: beforeCount,
+    remainingTickets: 0,
   });
 });
 
