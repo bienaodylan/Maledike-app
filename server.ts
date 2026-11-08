@@ -483,47 +483,18 @@ app.post('/api/site-assets/update',requireAdmin,async(req,res)=>{
 });
 
 // Upload route for visual assets (hero flyer, background, mood, gallery)
-app.post('/api/upload', requireAdmin, (req, res) => {
-  try {
-    const { fileData, fileName } = req.body;
-    if (!fileData) {
-      return res.status(400).json({ error: 'Aucun fichier transmis.' });
-    }
-
-    let buffer: Buffer;
-    let ext = '.png';
-
-    const matches = fileData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (matches && matches.length === 3) {
-      const mime = matches[1].toLowerCase();
-      buffer = Buffer.from(matches[2], 'base64');
-      if (mime.includes('jpeg') || mime.includes('jpg')) ext = '.jpg';
-      else if (mime.includes('webp')) ext = '.webp';
-      else if (mime.includes('svg')) ext = '.svg';
-      else if (mime.includes('gif')) ext = '.gif';
-      else ext = '.png';
-    } else {
-      buffer = Buffer.from(fileData, 'base64');
-      if (fileName && path.extname(fileName)) {
-        ext = path.extname(fileName).toLowerCase();
-      }
-    }
-
-    const cleanBase = (fileName || 'maledike_visual')
-      .replace(/\.[^/.]+$/, '')
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .substring(0, 30);
-    const generatedName = `${Date.now()}_${cleanBase}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, generatedName);
-
-    fs.writeFileSync(filePath, buffer);
-
-    const publicUrl = `/uploads/${generatedName}`;
-    return res.json({ success: true, url: publicUrl, fileName: generatedName });
-  } catch (err: any) {
-    console.error('Erreur upload:', err);
-    return res.status(500).json({ error: 'Erreur lors du traitement du fichier.' });
-  }
+app.post('/api/upload',requireAdmin,async(req,res)=>{
+  try{
+    if(!supabaseAdmin)return res.status(503).json({error:'Stockage indisponible'});
+    const fileData=req.body?.fileData;if(typeof fileData!=='string')return res.status(400).json({error:'Fichier absent'});
+    const m=fileData.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i);if(!m)return res.status(400).json({error:'Format autorisé: PNG, JPEG, WEBP ou GIF'});
+    const mime=m[1].toLowerCase(),buffer=Buffer.from(m[2],'base64');if(!buffer.length||buffer.length>5*1024*1024)return res.status(413).json({error:'Fichier limité à 5 Mo'});
+    const sig=buffer.subarray(0,12);let valid=mime==='image/png'?sig.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):mime==='image/jpeg'?sig[0]===0xff&&sig[1]===0xd8&&sig[2]===0xff:mime==='image/gif'?sig.subarray(0,3).toString()==='GIF':sig.subarray(0,4).toString()==='RIFF'&&sig.subarray(8,12).toString()==='WEBP';
+    if(!valid)return res.status(400).json({error:'Signature binaire incompatible avec le format'});
+    const ext=mime==='image/jpeg'?'jpg':mime.split('/')[1],name=crypto.randomBytes(18).toString('hex')+'.'+ext;
+    const {error}=await supabaseAdmin.storage.from('site-assets').upload(name,buffer,{contentType:mime,cacheControl:'31536000',upsert:false});if(error)return res.status(500).json({error:'Envoi du visuel impossible'});
+    const {data}=supabaseAdmin.storage.from('site-assets').getPublicUrl(name);return res.json({success:true,url:data.publicUrl,fileName:name});
+  }catch(e){console.error('[upload] erreur:',String((e as any)?.message||'unknown'));return res.status(500).json({error:'Erreur lors du traitement du fichier'});}
 });
 
 // ----------------- 2. AUTHENTICATION -----------------
@@ -563,26 +534,14 @@ app.post('/api/auth/login', async (req, res) => {
   } catch(e:any) { console.error('[auth/login]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la connexion.'}); }
 });
 
-app.post('/api/auth/update-profile', async (req, res) => {
-  const authHeader=req.headers.authorization||'';
-  const token=authHeader.startsWith('Bearer ')?authHeader.slice(7).trim():'';
-  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
-  const {data:authData,error:authError}=await supabaseAuth.auth.getUser(token);
-  if(authError||!authData.user)return res.status(401).json({error:'Session invalide.'});
-  if(req.body?.userId!==authData.user.id)return res.status(403).json({error:'Modification du profil interdite.'});
-  db = readDb();
-  const { userId, firstName, lastName, whatsappNumber, countryCode } = req.body;
-  const user = db.profiles.find(p => p.id === userId);
-  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
-
-  if (firstName) user.firstName = firstName.trim();
-  if (lastName) user.lastName = lastName.trim();
-  if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
-  if (countryCode) user.countryCode = countryCode.trim();
-
-  saveDb(db);
-  const { passwordHash: _, ...safeUser } = user;
-  res.json({ success: true, user: safeUser });
+app.post('/api/auth/update-profile',async(req,res)=>{
+  const user=await getVerifiedUser(req);if(!user)return res.status(401).json({error:'Authentification requise.'});
+  if(!supabaseAdmin)return res.status(503).json({error:'Profil indisponible'});
+  const b=req.body||{};if(b.userId&&b.userId!==user.id)return res.status(403).json({error:'Modification interdite'});
+  const patch:any={id:user.id,email:user.email,updated_at:new Date().toISOString()};
+  for(const [k,col,max] of [['firstName','first_name',80],['lastName','last_name',80],['whatsappNumber','whatsapp_number',25],['countryCode','country_code',6]] as const){if(b[k]!==undefined){if(typeof b[k]!=='string'||b[k].length>max)return res.status(400).json({error:'Profil invalide'});patch[col]=b[k].trim();}}
+  const {data,error}=await supabaseAdmin.from('profiles').upsert(patch,{onConflict:'id'}).select('*').single();if(error)return res.status(500).json({error:'Mise à jour impossible'});
+  return res.json({success:true,user:{id:data.id,email:data.email,firstName:data.first_name,lastName:data.last_name,whatsappNumber:data.whatsapp_number,countryCode:data.country_code,role:user.email?.toLowerCase()===ROOT_ADMIN_EMAIL?'admin':'user'}});
 });
 
 // ----------------- 3. ORDERS & GENIUS PAY REAL PAYMENT GATEWAY -----------------
