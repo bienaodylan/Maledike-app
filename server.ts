@@ -1021,73 +1021,18 @@ app.get('/api/scanner/history/:token', async (req, res) => {
 });
 
 // ----------------- 6. ANALYTICS -----------------
-app.get('/api/admin/analytics', requireAdmin, (_req, res) => {
-  db = readDb();
-  const completedOrders = db.orders.filter(o => o.status === 'completed');
-  const pendingOrders = db.orders.filter(o => o.status === 'pending');
-  const failedOrders = db.orders.filter(o => o.status === 'failed' || o.status === 'cancelled');
-
-  const totalRevenue = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
-  const totalTicketsSold = db.tickets.filter(t => t.status !== 'cancelled').length;
-  const checkedInCount = db.tickets.filter(t => t.status === 'checked_in').length;
-
-  const hourlyMap: Record<string, { amount: number; count: number }> = {};
-  for (let h = 0; h < 24; h++) {
-    const label = `${String(h).padStart(2, '0')}h`;
-    hourlyMap[label] = { amount: 0, count: 0 };
-  }
-
-  for (const o of completedOrders) {
-    const d = new Date(o.completedAt || o.createdAt);
-    const hourKey = `${String(d.getHours()).padStart(2, '0')}h`;
-    if (hourlyMap[hourKey]) {
-      hourlyMap[hourKey].amount += o.totalAmount;
-      hourlyMap[hourKey].count += 1;
-    }
-  }
-
-  const hourlySales = Object.entries(hourlyMap).map(([hour, data]) => ({
-    hour,
-    amount: data.amount,
-    count: data.count,
-  }));
-
-  const operatorMap: Record<string, { count: number; amount: number; color: string }> = {
-    wave: { count: 0, amount: 0, color: '#1DC4FF' },
-    orange_money: { count: 0, amount: 0, color: '#FF7900' },
-    mtn_momo: { count: 0, amount: 0, color: '#FFCC00' },
-    moov_money: { count: 0, amount: 0, color: '#005CA9' },
-    djamo_card: { count: 0, amount: 0, color: '#3A10E5' },
-  };
-
-  for (const o of completedOrders) {
-    const op = o.paymentMethod || 'wave';
-    if (operatorMap[op]) {
-      operatorMap[op].count += 1;
-      operatorMap[op].amount += o.totalAmount;
-    }
-  }
-
-  const operatorData = Object.entries(operatorMap).map(([name, data]) => ({
-    name: name === 'wave' ? 'Wave' : name === 'orange_money' ? 'Orange Money' : name === 'mtn_momo' ? 'MTN MoMo' : name === 'moov_money' ? 'Moov Money' : 'Djamo / CB',
-    count: data.count,
-    amount: data.amount,
-    color: data.color,
-  }));
-
-  res.json({
-    totalRevenueFcfa: totalRevenue,
-    totalSalesCount: completedOrders.length,
-    completedOrdersCount: completedOrders.length,
-    pendingOrdersCount: pendingOrders.length,
-    failedOrdersCount: failedOrders.length,
-    totalTicketsSold,
-    remainingStock: Math.max(0, db.event.totalCapacity - totalTicketsSold),
-    checkedInCount,
-    hourlySales,
-    operatorData,
-    recentOrders: completedOrders.slice(-5).reverse(),
-  });
+app.get('/api/admin/analytics',requireAdmin,async(_req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Analytics indisponibles'});
+  const [o,t,e]=await Promise.all([supabaseAdmin.from('orders').select('*'),supabaseAdmin.from('tickets').select('*'),supabaseAdmin.from('event_config').select('total_capacity').eq('id','maledike-party-2026').single()]);
+  if(o.error||t.error||e.error)return res.status(503).json({error:'Analytics indisponibles'});
+  const orders=(o.data||[]).map(rowToOrder),tickets=t.data||[],completed=orders.filter(x=>x.status==='completed'),pending=orders.filter(x=>x.status==='pending'),failed=orders.filter(x=>['failed','cancelled'].includes(x.status));
+  const revenue=completed.reduce((a,x)=>a+Number(x.totalAmount||0),0),sold=tickets.filter(x=>x.status!=='cancelled').length,checked=tickets.filter(x=>x.status==='checked_in').length;
+  const hours:Record<string,{amount:number,count:number}>={};for(let h=0;h<24;h++)hours[String(h).padStart(2,'0')+'h']={amount:0,count:0};
+  for(const x of completed){const h=new Date(x.completedAt||x.createdAt).getHours().toString().padStart(2,'0')+'h';if(hours[h]){hours[h].amount+=Number(x.totalAmount||0);hours[h].count++;}}
+  const colors:any={wave:'#1DC4FF',orange_money:'#FF7900',mtn_momo:'#FFCC00',moov_money:'#005CA9',djamo_card:'#3A10E5'},ops:any={};
+  for(const [k,color]of Object.entries(colors))ops[k]={count:0,amount:0,color};
+  for(const x of completed){const k=x.paymentMethod||'wave';if(ops[k]){ops[k].count++;ops[k].amount+=Number(x.totalAmount||0);}}
+  return res.json({totalRevenueFcfa:revenue,totalSalesCount:completed.length,completedOrdersCount:completed.length,pendingOrdersCount:pending.length,failedOrdersCount:failed.length,totalTicketsSold:sold,remainingStock:Math.max(0,e.data.total_capacity-sold),checkedInCount:checked,hourlySales:Object.entries(hours).map(([hour,v])=>({hour,...v})),operatorData:Object.entries(ops).map(([name,v]:any)=>({name:name==='wave'?'Wave':name==='orange_money'?'Orange Money':name==='mtn_momo'?'MTN MoMo':name==='moov_money'?'Moov Money':'Djamo / CB',...v})),recentOrders:completed.slice(-5).reverse()});
 });
 
 // ----------------- 7. GATEWAY CONFIG & TEST CLEANUP -----------------
@@ -1190,25 +1135,11 @@ app.post('/api/tickets/scan', (_req, res) => {
   */
 });
 
-app.get('/api/admin/orders', requireAdmin, (_req, res) => {
-  db = readDb();
-  res.json(db.orders.slice().reverse());
-});
+app.get('/api/admin/orders',requireAdmin,async(_req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Commandes indisponibles'});const {data,error}=await supabaseAdmin.from('orders').select('*').order('created_at',{ascending:false}).limit(500);if(error)return res.status(500).json({error:'Commandes indisponibles'});return res.json((data||[]).map(rowToOrder));});
 
-app.get('/api/admin/tickets', requireAdmin, (_req, res) => {
-  db = readDb();
-  res.json(db.tickets.slice().reverse());
-});
+app.get('/api/admin/tickets',requireAdmin,async(_req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Billets indisponibles'});const {data,error}=await supabaseAdmin.from('tickets').select('*').order('created_at',{ascending:false}).limit(1000);if(error)return res.status(500).json({error:'Billets indisponibles'});return res.json((data||[]).map(t=>({id:t.id,ticketNumber:t.ticket_number,orderId:t.order_id,userId:t.user_id,attendeeName:t.attendee_name,attendeeEmail:t.attendee_email,attendeePhone:t.attendee_phone,eventTitle:t.event_title,eventDate:t.event_date,eventTime:t.event_time,price:t.price,category:t.category,categoryName:t.category_name,qrTokenHash:t.qr_token_hash,status:t.status,createdAt:t.created_at,checkedInAt:t.checked_in_at,checkedInByAgent:t.checked_in_by_agent})));});
 
-app.post('/api/admin/tickets/cancel', requireAdmin, (req, res) => {
-  const { ticketId } = req.body;
-  db = readDb();
-  const ticket = db.tickets.find(t => t.id === ticketId);
-  if (!ticket) return res.status(404).json({ error: 'Ticket non trouvé' });
-  ticket.status = 'cancelled';
-  saveDb(db);
-  res.json({ success: true, ticket });
-});
+app.post('/api/admin/tickets/cancel',requireAdmin,async(req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Billets indisponibles'});const id=req.body?.ticketId;if(typeof id!=='string'||id.length>100)return res.status(400).json({error:'Identifiant invalide'});const {data,error}=await supabaseAdmin.from('tickets').update({status:'cancelled'}).eq('id',id).neq('status','checked_in').select('*').maybeSingle();if(error)return res.status(500).json({error:'Annulation impossible'});if(!data)return res.status(404).json({error:'Billet introuvable ou déjà scanné'});return res.json({success:true,ticket:{id:data.id,ticketNumber:data.ticket_number,status:data.status}});});
 
 // ----------------- VITE MIDDLEWARE / STATIC ASSETS -----------------
 async function startServer() {
