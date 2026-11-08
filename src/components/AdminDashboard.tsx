@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ResponsiveContainer,
@@ -128,6 +129,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Scanner Tokens Management
   const [scannerTokens, setScannerTokens] = useState<ScannerToken[]>([]);
+  const [scannerQrDataUrl, setScannerQrDataUrl] = useState('');
   const [newAgentName, setNewAgentName] = useState('');
   const [newGateName, setNewGateName] = useState('Entrée Principale VIP');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
@@ -188,6 +190,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   useEffect(() => {
     setIsAdminAuthenticated(isDylanAdmin);
   }, [isDylanAdmin]);
+
+  useEffect(() => { const token=scannerTokens.find(t=>t.isActive)?.token; if(!token){setScannerQrDataUrl('');return;} QRCode.toDataURL(`${window.location.origin}/scanner?token=${token}`,{width:220,margin:1,errorCorrectionLevel:'M'}).then(setScannerQrDataUrl).catch(()=>setScannerQrDataUrl('')); },[scannerTokens]);
 
   const loadDashboardData = async () => {
     if (!isDylanAdmin) return;
@@ -1356,14 +1360,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </p>
 
                     {(() => {
-                      const activeToken = scannerTokens.find(t => t.isActive)?.token || 'mlk_scan_vip_door_2026';
-                      const scanUrl = `${window.location.origin}/scanner?token=${activeToken}`;
+                      const activeToken = scannerTokens.find(t => t.isActive)?.token || '';
+                      const scanUrl = activeToken ? `${window.location.origin}/scanner?token=${activeToken}` : '';
                       return (
                         <div className="flex flex-col sm:flex-row items-center gap-4 bg-black/60 p-4 rounded-2xl border border-white/10">
                           {/* QR Code preview */}
                           <div className="w-32 h-32 shrink-0 bg-white p-2 rounded-xl flex items-center justify-center shadow-lg">
                             <img
-                              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(scanUrl)}`}
+                              src={scannerQrDataUrl}
                               alt="QR Code Scanner"
                               className="w-full h-full object-contain"
                             />
