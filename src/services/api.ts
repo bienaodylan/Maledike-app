@@ -188,7 +188,7 @@ export const api = {
   async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {
     const res = await fetch(`${API_BASE}/auth/update-profile`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAdminHeaders() },
       body: JSON.stringify({ userId, ...data }),
     });
     const result = await res.json();
