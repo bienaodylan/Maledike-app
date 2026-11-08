@@ -247,15 +247,16 @@ const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   : null;
 const ROOT_ADMIN_EMAIL = 'bienaodylan428@gmail.com';
 
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const adminEmail = (req.headers['x-admin-email'] || req.query.adminEmail || '').toString().toLowerCase().trim();
-  if (adminEmail === ROOT_ADMIN_EMAIL || adminEmail === 'bienaodylan428@gmail.com') {
+async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const authorization = req.headers.authorization || '';
+    const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    if (!token || !supabaseAuth) return res.status(401).json({success:false,error:'Authentification requise.'});
+    const {data,error}=await supabaseAuth.auth.getUser(token);
+    const email=data.user?.email?.toLowerCase().trim();
+    if(error||!data.user||email!==ROOT_ADMIN_EMAIL) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
     return next();
-  }
-  return res.status(403).json({
-    success: false,
-    error: 'Accès refusé. Cette ressource est strictement réservée à l\'administrateur certifié (bienaodylan428@gmail.com).',
-  });
+  } catch { return res.status(401).json({success:false,error:'Session invalide.'}); }
 }
 
 function orderToRow(order: any) {
@@ -492,7 +493,7 @@ app.post('/api/auth/register', async (req, res) => {
     const profile={ id:data.user.id,email:normalizedEmail,first_name:String(firstName).trim(),last_name:String(lastName).trim(),whatsapp_number:String(whatsappNumber).trim(),country_code:countryCode||'+225' };
     const { error: profileError }=await supabaseAdmin.from('profiles').upsert(profile,{onConflict:'id'});
     if(profileError) console.error('[auth/register] profile sync:',profileError.message);
-    return res.json({success:true,needsEmailConfirmation:!data.session,user:{id:data.user.id,email:normalizedEmail,firstName:profile.first_name,lastName:profile.last_name,whatsappNumber:profile.whatsapp_number,countryCode:profile.country_code,role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:data.user.created_at}});
+    return res.json({success:true,needsEmailConfirmation:!data.session,accessToken:data.session?.access_token||null,user:{id:data.user.id,email:normalizedEmail,firstName:profile.first_name,lastName:profile.last_name,whatsappNumber:profile.whatsapp_number,countryCode:profile.country_code,role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:data.user.created_at}});
   } catch(e:any) { console.error('[auth/register]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la création du compte.'}); }
 });
 
@@ -507,7 +508,7 @@ app.post('/api/auth/login', async (req, res) => {
     const {data:profile}=await supabaseAdmin.from('profiles').select('*').eq('id',data.user.id).maybeSingle();
     const meta=data.user.user_metadata||{};
     const user={id:data.user.id,email:normalizedEmail,firstName:profile?.first_name||meta.first_name||'',lastName:profile?.last_name||meta.last_name||'',whatsappNumber:profile?.whatsapp_number||meta.whatsapp_number||'',countryCode:profile?.country_code||meta.country_code||'+225',role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:data.user.created_at};
-    return res.json({success:true,user});
+    return res.json({success:true,accessToken:data.session.access_token,user});
   } catch(e:any) { console.error('[auth/login]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la connexion.'}); }
 });
 
