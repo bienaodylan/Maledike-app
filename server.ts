@@ -810,7 +810,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed') {
-        fulfillOrder(order);
+        await fulfillOrder(order);
         const tickets = db.tickets.filter(t => t.orderId === orderId);
         const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
         return res.json({
@@ -905,7 +905,7 @@ app.post('/api/payments/geniuspay/webhook', (req, res) => {
 });
 
 // Helper: Fulfill order atomically
-function fulfillOrder(order: any) {
+async function fulfillOrder(order: any) {
   if (order.status === 'completed') return;
 
   order.status = 'completed';
@@ -961,6 +961,12 @@ function fulfillOrder(order: any) {
   }
 
   saveDb(db);
+  if (supabaseAdmin) {
+    const tickets = db.tickets.filter(t => t.orderId === order.id).map(t => ({id:t.id,ticket_number:t.ticketNumber,order_id:t.orderId,user_id:t.userId,attendee_name:t.attendeeName,attendee_email:t.attendeeEmail,attendee_phone:t.attendeePhone,event_title:t.eventTitle,event_date:t.eventDate,event_time:t.eventTime,price:t.price,qr_token_hash:t.qrTokenHash,status:t.status,created_at:t.createdAt,checked_in_at:t.checkedInAt||null,checked_in_by_agent:t.checkedInByAgent||null}));
+    const purchases = db.userDigitalPurchases.filter(p => p.orderId === order.id).map(p => ({id:p.id,user_id:p.userId,order_id:p.orderId,product_id:p.productId,product_title:p.productTitle,price:0,format:p.format,file_name:p.fileName,file_url:p.fileUrl,download_token:p.downloadToken,purchased_at:p.purchasedAt}));
+    const writes = [supabaseAdmin.from('orders').upsert(orderToRow(order),{onConflict:'id'}), ...(tickets.length?[supabaseAdmin.from('tickets').upsert(tickets,{onConflict:'id'})]:[]), ...(purchases.length?[supabaseAdmin.from('user_digital_purchases').upsert(purchases,{onConflict:'id'})]:[])];
+    const results=await Promise.all(writes); const failure=results.find(r=>r.error); if(failure?.error) throw failure.error;
+  }
 }
 
 // Secure Order Confirmation: Interdit la génération de billets sans vérification serveur
@@ -1425,15 +1431,15 @@ app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => {
 
 // ----------------- 8. TICKETS & USER PASSES -----------------
 app.get('/api/tickets/mine', async (req, res) => {
-  const authorization=req.headers.authorization||'';
-  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
-  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
-  const {data,error}=await supabaseAuth.auth.getUser(token);
-  if(error||!data.user)return res.status(401).json({error:'Session invalide.'});
-  db=readDb();
-  const myTickets=db.tickets.filter(t=>t.userId===data.user.id&&t.status!=='cancelled');
+  const user=await getVerifiedUser(req);
+  if(!user) return res.status(401).json({error:'Authentification requise.'});
   res.setHeader('Cache-Control','no-store');
-  return res.json({tickets:myTickets,secretLocationRevealed:db.event.isSecretLocationRevealed,secretLocationAddress:db.event.isSecretLocationRevealed?db.event.secretLocationAddress:null});
+  if(supabaseAdmin){
+    const {data,error}=await supabaseAdmin.from('tickets').select('*').eq('user_id',user.id).order('created_at',{ascending:false});
+    if(error) return res.status(500).json({error:'Impossible de charger les billets.'});
+    return res.json((data||[]).map(t=>({id:t.id,ticketNumber:t.ticket_number,orderId:t.order_id,userId:t.user_id,attendeeName:t.attendee_name,attendeeEmail:t.attendee_email,attendeePhone:t.attendee_phone,eventTitle:t.event_title,eventDate:t.event_date,eventTime:t.event_time,price:t.price,qrTokenHash:t.qr_token_hash,status:t.status,createdAt:t.created_at,checkedInAt:t.checked_in_at,checkedInByAgent:t.checked_in_by_agent})));
+  }
+  return res.json(db.tickets.filter(t=>t.userId===user.id));
 });
 
 app.post('/api/tickets/scan', (_req, res) => {
