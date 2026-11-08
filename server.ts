@@ -1130,194 +1130,61 @@ Billet sécurisé et accès VIP garantis.`);
 });
 
 // ----------------- 5. SCANNER TOKENIZED ACCESS LINKS -----------------
-app.get('/api/admin/scanner-tokens', requireAdmin, (_req, res) => {
-  db = readDb();
-  res.json(db.scannerTokens);
+app.get('/api/admin/scanner-tokens', requireAdmin, async (_req, res) => {
+  if(!supabaseAdmin) return res.status(503).json({error:'Supabase indisponible'});
+  const {data,error}=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').order('created_at',{ascending:false});
+  if(error) return res.status(500).json({error:'Impossible de charger les scanners'});
+  return res.json((data||[]).map(t=>({id:t.id,agentName:t.agent_name,gateName:t.gate_name,eventId:t.event_id,isActive:t.is_active,createdAt:t.created_at,lastUsedAt:t.last_used_at,scanCount:t.scan_count})));
 });
 
-app.post('/api/admin/scanner-tokens', requireAdmin, (req, res) => {
-  db = readDb();
-  const { agentName, gateName } = req.body;
-  if (!agentName) return res.status(400).json({ error: 'Nom de l\'agent requis' });
-
-  const tokenStr = 'sct_' + crypto.randomBytes(8).toString('hex');
-  const newToken = {
-    id: 'tok_' + Date.now(),
-    token: tokenStr,
-    agentName: agentName.trim(),
-    gateName: gateName || 'Entrée Principale',
-    eventId: db.event.id,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    scanCount: 0,
-  };
-
-  db.scannerTokens.push(newToken);
-  saveDb(db);
-  res.json({ success: true, scannerToken: newToken });
+app.post('/api/admin/scanner-tokens', requireAdmin, async (req, res) => {
+  if(!supabaseAdmin) return res.status(503).json({error:'Supabase indisponible'});
+  const {agentName,gateName}=req.body||{};
+  if(typeof agentName!=='string'||!agentName.trim()) return res.status(400).json({error:"Nom de l'agent requis"});
+  const tokenStr='sct_'+crypto.randomBytes(32).toString('hex');
+  const row={id:'tok_'+crypto.randomUUID(),token:tokenStr,agent_name:agentName.trim(),gate_name:(typeof gateName==='string'&&gateName.trim())?gateName.trim():'Entrée Principale',event_id:'maledike-party-2026',is_active:true,scan_count:0};
+  const {data,error}=await supabaseAdmin.from('scanner_tokens').insert(row).select('id,token,agent_name,gate_name,event_id,is_active,created_at,scan_count').single();
+  if(error) return res.status(500).json({error:'Création du scanner impossible'});
+  return res.json({success:true,scannerToken:{id:data.id,token:data.token,agentName:data.agent_name,gateName:data.gate_name,eventId:data.event_id,isActive:data.is_active,createdAt:data.created_at,scanCount:data.scan_count}});
 });
 
-app.post('/api/admin/scanner-tokens/revoke', requireAdmin, (req, res) => {
-  const { tokenId } = req.body;
-  db = readDb();
-  const tok = db.scannerTokens.find(t => t.id === tokenId);
-  if (!tok) return res.status(404).json({ error: 'Token introuvable' });
-
-  tok.isActive = false;
-  saveDb(db);
-  res.json({ success: true, token: tok });
+app.post('/api/admin/scanner-tokens/revoke', requireAdmin, async (req, res) => {
+  if(!supabaseAdmin) return res.status(503).json({error:'Supabase indisponible'});
+  const {tokenId}=req.body||{};
+  const {data,error}=await supabaseAdmin.from('scanner_tokens').update({is_active:false}).eq('id',tokenId).select('id,agent_name,gate_name,is_active').maybeSingle();
+  if(error) return res.status(500).json({error:'Révocation impossible'});
+  if(!data) return res.status(404).json({error:'Token introuvable'});
+  return res.json({success:true,token:{id:data.id,agentName:data.agent_name,gateName:data.gate_name,isActive:data.is_active}});
 });
 
-app.get('/api/scanner/verify-token/:token', (req, res) => {
-  const { token } = req.params;
-  db = readDb();
-  const tok = db.scannerTokens.find(t => t.token === token && t.isActive);
-  if (!tok) {
-    return res.status(401).json({ success: false, error: 'Accès scanner non autorisé ou révoqué' });
-  }
-
-  res.json({
-    valid: true,
-    success: true,
-    agentName: tok.agentName,
-    gateName: tok.gateName,
-    eventTitle: db.event.title,
-    tokenInfo: tok,
-  });
+app.get('/api/scanner/verify-token/:token', async (req, res) => {
+  if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
+  const token=String(req.params.token||'');
+  const {data:tok,error}=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').eq('token',token).eq('is_active',true).maybeSingle();
+  if(error||!tok) return res.status(401).json({success:false,error:'Accès scanner non autorisé ou révoqué'});
+  db=readDb();
+  return res.json({valid:true,success:true,agentName:tok.agent_name,gateName:tok.gate_name,eventTitle:db.event.title,tokenInfo:{id:tok.id,agentName:tok.agent_name,gateName:tok.gate_name,eventId:tok.event_id,isActive:tok.is_active,scanCount:tok.scan_count}});
 });
 
-app.post('/api/tickets/agent-scan', (req, res) => {
-  const { qrTokenHash, scannerToken } = req.body;
-  db = readDb();
-
-  const tok = db.scannerTokens.find(t => t.token === scannerToken && t.isActive);
-  if (!tok) {
-    return res.status(403).json({ success: false, message: 'Accès agent non autorisé' });
-  }
-
-  let cleanInput = (qrTokenHash || '').trim();
-  try {
-    if (cleanInput.startsWith('{') && cleanInput.endsWith('}')) {
-      const parsed = JSON.parse(cleanInput);
-      cleanInput = parsed.qrTokenHash || parsed.ticketNumber || cleanInput;
-    }
-  } catch {}
-
-  const ticket = db.tickets.find(t =>
-    t.qrTokenHash === cleanInput ||
-    t.ticketNumber?.toLowerCase() === cleanInput.toLowerCase() ||
-    t.id === cleanInput
-  );
-
-  if (!ticket) {
-    db.auditLogs.push({
-      id: 'scan_invalid_' + Date.now(),
-      action: 'INVALID_TICKET_SCANNED',
-      details: {
-        rawInput: cleanInput.slice(0, 30),
-        agent: tok.agentName,
-        gate: tok.gateName,
-      },
-      timestamp: new Date().toISOString(),
-    });
-    saveDb(db);
-    return res.status(404).json({
-      success: false,
-      message: 'BILLET INTROUVABLE OU NON VALIDE',
-      error: 'NOT_FOUND',
-    });
-  }
-
-  if (ticket.status === 'cancelled') {
-    db.auditLogs.push({
-      id: 'scan_cancelled_' + Date.now(),
-      action: 'CANCELLED_TICKET_SCANNED',
-      details: {
-        ticketNumber: ticket.ticketNumber,
-        attendeeName: ticket.attendeeName,
-        agent: tok.agentName,
-        gate: tok.gateName,
-      },
-      timestamp: new Date().toISOString(),
-    });
-    saveDb(db);
-    return res.status(400).json({
-      success: false,
-      message: 'ATTENTION : BILLET ANNULÉ',
-      error: 'CANCELLED',
-      ticket,
-    });
-  }
-
-  if (ticket.status === 'checked_in') {
-    const formattedFirstScan = new Date(ticket.checkedInAt || '').toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-    db.auditLogs.push({
-      id: 'scan_dup_' + Date.now(),
-      action: 'DUPLICATE_SCAN_REJECTED',
-      details: {
-        ticketNumber: ticket.ticketNumber,
-        attendeeName: ticket.attendeeName,
-        alreadyCheckedInAt: ticket.checkedInAt,
-        agent: tok.agentName,
-        gate: tok.gateName,
-      },
-      timestamp: new Date().toISOString(),
-    });
-    saveDb(db);
-    return res.status(400).json({
-      success: false,
-      message: `DOUBLE ENTRÉE INTERDITE ! Déjà scanné à ${formattedFirstScan}`,
-      error: 'ALREADY_USED',
-      ticket,
-      alreadyCheckedInAt: ticket.checkedInAt,
-    });
-  }
-
-  ticket.status = 'checked_in';
-  ticket.checkedInAt = new Date().toISOString();
-  ticket.checkedInByAgent = `${tok.agentName} (${tok.gateName})`;
-  tok.scanCount += 1;
-  tok.lastUsedAt = new Date().toISOString();
-
-  db.auditLogs.push({
-    id: 'scan_' + Date.now(),
-    action: 'TICKET_CHECKED_IN',
-    details: {
-      ticketNumber: ticket.ticketNumber,
-      attendeeName: ticket.attendeeName,
-      agent: tok.agentName,
-      gate: tok.gateName,
-      category: ticket.categoryName || ticket.category || 'VIP',
-    },
-    timestamp: new Date().toISOString(),
-  });
-
-  saveDb(db);
-  res.json({
-    success: true,
-    message: 'ACCÈS VALIDÉ ! Passe VIP autorisé.',
-    ticket,
-  });
+app.post('/api/tickets/agent-scan', async (req, res) => {
+  if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
+  const {qrTokenHash,scannerToken}=req.body||{};
+  if(typeof scannerToken!=='string'||typeof qrTokenHash!=='string'||!qrTokenHash.trim()) return res.status(400).json({success:false,error:'Code QR ou scanner manquant'});
+  let cleanInput=qrTokenHash.trim();
+  try { if(cleanInput.startsWith('{')&&cleanInput.endsWith('}')){const parsed=JSON.parse(cleanInput);cleanInput=parsed.qrTokenHash||parsed.ticketNumber||cleanInput;} } catch {}
+  const {data,error}=await supabaseAdmin.rpc('maledike_agent_scan',{p_code:cleanInput,p_scanner_token:scannerToken});
+  if(error) return res.status(403).json({success:false,message:'Scan refusé ou service indisponible',error:'SCAN_REJECTED'});
+  await supabaseAdmin.from('scanner_tokens').update({last_used_at:new Date().toISOString()}).eq('token',scannerToken).eq('is_active',true);
+  return res.json(data);
 });
 
-app.get('/api/scanner/history/:token', (req, res) => {
-  const { token } = req.params;
-  db = readDb();
-  const tok = db.scannerTokens.find(t => t.token === token && t.isActive);
-  if (!tok) {
-    return res.status(403).json({ error: 'Token non autorisé' });
-  }
-
-  const logs = (db.auditLogs || [])
-    .filter(l => (l.action?.includes('SCAN') || l.action === 'TICKET_CHECKED_IN') && l.details?.agent === tok.agentName && l.details?.gate === tok.gateName)
-    .slice(-30)
-    .reverse();
-
-  res.json(logs);
+app.get('/api/scanner/history/:token', async (req, res) => {
+  if(!supabaseAdmin) return res.status(503).json({error:'Historique indisponible'});
+  const token=String(req.params.token||'');
+  const {data,error}=await supabaseAdmin.rpc('maledike_scanner_history',{p_scanner_token:token});
+  if(error) return res.status(403).json({error:'Token non autorisé ou historique indisponible'});
+  res.setHeader('Cache-Control','no-store');
+  return res.json(data||[]);
 });
 
 // ----------------- 6. ANALYTICS -----------------
