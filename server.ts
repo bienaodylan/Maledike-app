@@ -990,7 +990,8 @@ app.post('/api/admin/scanner-tokens/revoke', requireAdmin, async (req, res) => {
 app.get('/api/scanner/verify-token/:token', async (req, res) => {
   if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   const token=String(req.params.token||'');
-  const {data:tok,error}=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').eq('token',token).eq('is_active',true).maybeSingle();
+  if(!/^sct_[a-f0-9]{64}$/.test(token)||!await rateLimitHit('scanner-verify:'+clientIp(req),30,60))return res.status(429).json({error:'Scanner limité ou jeton invalide'});
+  const {data:tok,error=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').eq('token',token).eq('is_active',true).maybeSingle();
   if(error||!tok) return res.status(401).json({success:false,error:'Accès scanner non autorisé ou révoqué'});
   db=readDb();
   return res.json({valid:true,success:true,agentName:tok.agent_name,gateName:tok.gate_name,eventTitle:db.event.title,tokenInfo:{id:tok.id,agentName:tok.agent_name,gateName:tok.gate_name,eventId:tok.event_id,isActive:tok.is_active,scanCount:tok.scan_count}});
@@ -999,7 +1000,8 @@ app.get('/api/scanner/verify-token/:token', async (req, res) => {
 app.post('/api/tickets/agent-scan', async (req, res) => {
   if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   const {qrTokenHash,scannerToken}=req.body||{};
-  if(typeof scannerToken!=='string'||typeof qrTokenHash!=='string'||!qrTokenHash.trim()) return res.status(400).json({success:false,error:'Code QR ou scanner manquant'});
+  if(typeof scannerToken!=='string'||!/^sct_[a-f0-9]{64}$/.test(scannerToken)||typeof qrTokenHash!=='string'||!qrTokenHash.trim()||qrTokenHash.length>200) return res.status(400).json({success:false,error:'Code QR ou scanner invalide'});
+  if(!await rateLimitHit('agent-scan:'+clientIp(req),60,60))return res.status(429).json({success:false,error:'Trop de scans; ralentissez.'});
   let cleanInput=qrTokenHash.trim();
   try { if(cleanInput.startsWith('{')&&cleanInput.endsWith('}')){const parsed=JSON.parse(cleanInput);cleanInput=parsed.qrTokenHash||parsed.ticketNumber||cleanInput;} } catch {}
   const {data,error}=await supabaseAdmin.rpc('maledike_agent_scan',{p_code:cleanInput,p_scanner_token:scannerToken});
@@ -1011,6 +1013,7 @@ app.post('/api/tickets/agent-scan', async (req, res) => {
 app.get('/api/scanner/history/:token', async (req, res) => {
   if(!supabaseAdmin) return res.status(503).json({error:'Historique indisponible'});
   const token=String(req.params.token||'');
+  if(!/^sct_[a-f0-9]{64}$/.test(token)||!await rateLimitHit('scanner-history:'+clientIp(req),10,60))return res.status(429).json({error:'Historique limité ou jeton invalide'});
   const {data,error}=await supabaseAdmin.rpc('maledike_scanner_history',{p_scanner_token:token});
   if(error) return res.status(403).json({error:'Token non autorisé ou historique indisponible'});
   res.setHeader('Cache-Control','no-store');
