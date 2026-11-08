@@ -835,7 +835,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
 });
 
 // Webhook
-app.post('/api/payments/geniuspay/webhook', (req, res) => {
+app.post('/api/payments/geniuspay/webhook', async (req, res) => {
   try {
     const sigHeader = req.headers['x-geniuspay-signature'] || req.headers['x-signature'];
     const signature = Array.isArray(sigHeader) ? sigHeader[0] : (sigHeader as string | undefined);
@@ -963,7 +963,7 @@ async function fulfillOrder(order: any) {
   saveDb(db);
   if (supabaseAdmin) {
     const tickets = db.tickets.filter(t => t.orderId === order.id).map(t => ({id:t.id,ticket_number:t.ticketNumber,order_id:t.orderId,user_id:t.userId,attendee_name:t.attendeeName,attendee_email:t.attendeeEmail,attendee_phone:t.attendeePhone,event_title:t.eventTitle,event_date:t.eventDate,event_time:t.eventTime,price:t.price,qr_token_hash:t.qrTokenHash,status:t.status,created_at:t.createdAt,checked_in_at:t.checkedInAt||null,checked_in_by_agent:t.checkedInByAgent||null}));
-    const purchases = db.userDigitalPurchases.filter(p => p.orderId === order.id).map(p => ({id:p.id,user_id:p.userId,order_id:p.orderId,product_id:p.productId,product_title:p.productTitle,price:0,format:p.format,file_name:p.fileName,file_url:p.fileUrl,download_token:p.downloadToken,purchased_at:p.purchasedAt}));
+    const purchases = db.userDigitalPurchases.filter(p => p.orderId === order.id).map(p => ({id:p.id,user_id:p.userId,order_id:p.orderId,product_id:p.productId,product_title:p.productTitle,price:db.digitalProducts.find(x=>x.id===p.productId)?.price||0,format:p.format,file_name:p.fileName,file_url:p.fileUrl,download_token:p.downloadToken,purchased_at:p.purchasedAt}));
     const writes = [supabaseAdmin.from('orders').upsert(orderToRow(order),{onConflict:'id'}), ...(tickets.length?[supabaseAdmin.from('tickets').upsert(tickets,{onConflict:'id'})]:[]), ...(purchases.length?[supabaseAdmin.from('user_digital_purchases').upsert(purchases,{onConflict:'id'})]:[])];
     const results=await Promise.all(writes); const failure=results.find(r=>r.error); if(failure?.error) throw failure.error;
   }
@@ -1085,14 +1085,15 @@ app.post('/api/admin/digital-products', requireAdmin, (req, res) => {
 });
 
 app.get('/api/digital-products/mine', async (req, res) => {
-  const authorization=req.headers.authorization||'';
-  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
-  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
-  const {data,error}=await supabaseAuth.auth.getUser(token);
-  if(error||!data.user)return res.status(401).json({error:'Session invalide.'});
-  db=readDb();
+  const user=await getVerifiedUser(req);
+  if(!user) return res.status(401).json({error:'Authentification requise.'});
   res.setHeader('Cache-Control','no-store');
-  return res.json(db.userDigitalPurchases.filter(p=>p.userId===data.user.id));
+  if(supabaseAdmin){
+    const {data,error}=await supabaseAdmin.from('user_digital_purchases').select('*').eq('user_id',user.id).order('purchased_at',{ascending:false});
+    if(error) return res.status(500).json({error:'Impossible de charger les achats.'});
+    return res.json((data||[]).map(p=>({id:p.id,orderId:p.order_id,userId:p.user_id,productId:p.product_id,productTitle:p.product_title,format:p.format,fileName:p.file_name,fileUrl:p.file_url,downloadToken:p.download_token,purchasedAt:p.purchased_at})));
+  }
+  return res.json(db.userDigitalPurchases.filter(p=>p.userId===user.id));
 });
 
 app.get('/api/digital-products/download/:purchaseId', (req, res) => {
