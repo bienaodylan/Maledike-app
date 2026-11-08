@@ -599,10 +599,9 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     saveDb(db);
     await persistOrder(order);
 
-    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||getGeniusPayBaseUrl(db.gatewayConfig.env)).replace(/\\/+$/, '');
-    const hostOrigin = req.get('origin') || (req.get('referer') ? new URL(req.get('referer')!).origin : null);
-    const hostUrl = hostOrigin || process.env.APP_URL || `http://localhost:${PORT}`;
-    const cleanHost = hostUrl.replace(/\/+$/, '');
+    const gatewayUrl=(process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/,'');
+    if(!gatewayUrl||!APP_URL)return res.status(503).json({error:'Configuration GeniusPay ou APP_URL manquante'});
+    const cleanHost=APP_URL;
 
     // Map operator to GeniusPay specific method code
     const methodMap: Record<string, string> = {
