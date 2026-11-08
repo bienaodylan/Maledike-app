@@ -290,6 +290,7 @@ async function getVerifiedUser(req: express.Request) {
 }
 
 async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if(process.env.ADMIN_REQUIRE_MFA==='true'){const t=String(req.headers.authorization||'').replace(/^Bearer\\s+/i,'').trim();try{const claim=JSON.parse(Buffer.from(t.split('.')[1]||'','base64url').toString('utf8'));if(claim.aal!=='aal2')return res.status(403).json({success:false,error:'MFA fondateur requis (aal2).'});}catch{return res.status(401).json({success:false,error:'Session MFA invalide.'});}}
   try {
     const user = await getVerifiedUser(req);
     const email=user?.email?.toLowerCase().trim();
