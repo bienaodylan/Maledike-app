@@ -604,11 +604,12 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
 
     const order = await loadOrder(orderId);
     if (!order || order.userId !== user.id) return res.status(404).json({ error: 'Commande introuvable.' });
+    if(order.checkoutUrl&&order.transactionReference&&order.status==='pending')return res.json({success:true,checkoutUrl:order.checkoutUrl,session:{transactionId:order.transactionReference,amount:order.totalAmount,currency:'XOF',orderId:order.id,paymentMethod:order.paymentMethod,checkoutUrl:order.checkoutUrl,gatewayConnected:true,env:process.env.GENIUSPAY_ENV||'production'}});
     if (order.status !== 'pending') return res.status(409).json({error:'Cette commande ne peut plus être payée.'});
 
     if (Date.now() > order.reservationExpiresAt && order.status === 'pending') {
       order.status = 'cancelled';
-      saveDb(db);
+      await persistOrder(order);
       return res.status(400).json({ error: 'La réservation temporaire de 15 minutes a expiré.' });
     }
 
@@ -621,7 +622,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     saveDb(db);
     await persistOrder(order);
 
-    const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||getGeniusPayBaseUrl(db.gatewayConfig.env)).replace(/\\/+$/, '');
     const hostOrigin = req.get('origin') || (req.get('referer') ? new URL(req.get('referer')!).origin : null);
     const hostUrl = hostOrigin || process.env.APP_URL || `http://localhost:${PORT}`;
     const cleanHost = hostUrl.replace(/\/+$/, '');
@@ -663,7 +664,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     // Appel sécurisé à la passerelle avec la méthode de paiement sélectionnée
     let callRes = await callGeniusPayApi(`${gatewayUrl}/payments`, {
       method: 'POST',
-      publicKey: db.gatewayConfig.publicKey,
+      
       secretKey: db.gatewayConfig.secretKey,
       body: geniusPayPayload,
       timeoutMs: 15000,
@@ -698,7 +699,6 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       return res.status(callRes.status >= 400 && callRes.status < 600 ? callRes.status : 400).json({
         success: false,
         error: friendlyError,
-        rawMessage: rawMsg,
       });
     }
 
@@ -723,8 +723,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
         checkoutUrl: checkoutUrl || null,
         gatewayConnected: true,
         env: db.gatewayConfig.env,
-        publicKey: db.gatewayConfig.publicKey,
-      },
+        },
     });
   } catch (err: any) {
     console.error('Erreur inattendue paiement :', err.message);
@@ -773,7 +772,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
         return res.json({status:'completed',order,tickets,digitalPurchases});
       } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
         order.status = 'failed';
-        saveDb(db);
+        await persistOrder(order);
         return res.json({ status: 'failed', order });
       }
     }
@@ -787,72 +786,32 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
 });
 
 // Webhook
-app.post('/api/payments/geniuspay/webhook', async (req, res) => {
-  try {
-    const sigHeader = req.headers['x-geniuspay-signature'] || req.headers['x-signature'];
-    const signature = Array.isArray(sigHeader) ? sigHeader[0] : (sigHeader as string | undefined);
-    const rawBodyBuffer = (req as any).rawBody || Buffer.from(JSON.stringify(req.body));
-    db = readDb();
-
-    const verificationSecret = db.gatewayConfig.webhookSecret;
-    if (!verificationSecret || !signature) return res.status(503).json({error:'Webhook non configuré de façon sécurisée.'});
-    if (verificationSecret && signature) {
-      const hmac = crypto.createHmac('sha256', verificationSecret);
-      const expectedSig = hmac.update(rawBodyBuffer).digest('hex');
-      if (!timingSafeEqual(expectedSig, signature.toLowerCase())) {
-        console.error('Signature webhook invalide');
-        return res.status(401).json({ error: 'Signature invalide' });
-      }
+app.post('/api/payments/geniuspay/webhook', async (req,res)=>{
+  try{
+    if(!supabaseAdmin)return res.status(503).json({error:'Webhook indisponible'});
+    const raw=(req as any).rawBody as Buffer|undefined;
+    const signature=String(req.headers['x-webhook-signature']||'');
+    const timestamp=String(req.headers['x-webhook-timestamp']||'');
+    const secret=process.env.GENIUSPAY_WEBHOOK_SECRET||'';
+    if(!raw||!secret||!/^[0-9]{10}$/.test(timestamp)||Math.abs(Date.now()/1000-Number(timestamp))>300||!/^[a-f0-9]{64}$/i.test(signature))return res.status(401).json({error:'Signature webhook invalide'});
+    const expected=crypto.createHmac('sha256',secret).update(timestamp+'.').update(raw).digest('hex');
+    if(!timingSafeEqual(expected,signature.toLowerCase()))return res.status(401).json({error:'Signature webhook invalide'});
+    const payload=req.body||{},event=String(req.headers['x-webhook-event']||payload.event||'');
+    if(!['payment.success','payment.failed','payment.cancelled'].includes(event))return res.status(200).json({received:true,ignored:true});
+    const orderId=payload.data?.metadata?.order_id||payload.data?.metadata?.orderId||payload.orderId||payload.metadata?.order_id;
+    if(typeof orderId!=='string'||!orderId)return res.status(400).json({error:'Commande absente'});
+    const order=await loadOrder(orderId);if(!order)return res.status(404).json({error:'Commande introuvable'});
+    const amount=payload.data?.amount,reference=payload.data?.reference;
+    if(event==='payment.success'){
+      if(amount===undefined||reference===undefined||String(reference).length<4)return res.status(400).json({error:'Montant ou référence absente'});
+      if(Number(amount)!==Number(order.totalAmount)||String(payload.data?.currency||'').toUpperCase()!=='XOF')return res.status(400).json({error:'Montant ou devise incohérent'});
+      if(order.transactionReference&&String(reference)!==String(order.transactionReference))return res.status(400).json({error:'Référence incohérente'});
+      try{await fulfillOrder(order,String(reference),Number(amount));}
+      catch(e:any){if(e.message==='ORDER_EXPIRED_NO_CAPACITY'){console.error('[webhook] paiement tardif sans capacité; réconciliation requise',order.id);return res.status(200).json({received:true,needsReconciliation:true});}throw e;}
+      return res.status(200).json({received:true,completed:true});
     }
-
-    const payload = req.body;
-    const orderId = payload.data?.metadata?.orderId || payload.orderId || payload.metadata?.orderId;
-    const status = payload.data?.status || payload.status || payload.event;
-
-    if (!orderId) {
-      return res.status(400).json({ error: 'orderId manquant dans le webhook' });
-    }
-
-    const order = await loadOrder(orderId);
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (!db.orders.some(o=>o.id===order.id)) db.orders.push(order);
-
-    // Reject signed events whose amount/currency/reference contradict the persisted order.
-    const webhookAmount = payload.data?.amount ?? payload.amount;
-    if (webhookAmount !== undefined && Number(webhookAmount) !== order.totalAmount) {
-      return res.status(400).json({error:'Montant du webhook incohérent.'});
-    }
-    const webhookCurrency = payload.data?.currency ?? payload.currency;
-    if (webhookCurrency && !['XOF','FCFA'].includes(String(webhookCurrency).toUpperCase())) {
-      return res.status(400).json({error:'Devise du webhook incohérente.'});
-    }
-    const webhookReference = payload.data?.reference ?? payload.reference ?? payload.data?.transaction_reference;
-    if (webhookReference && order.transactionReference && String(webhookReference) !== String(order.transactionReference)) {
-      return res.status(400).json({error:'Référence de transaction incohérente.'});
-    }
-
-    if (order.status === 'completed') {
-      return res.json({ received: true, alreadyCompleted: true });
-    }
-
-    if (status === 'success' || status === 'completed' || status === 'payment.completed') {
-      await fulfillOrder(order,String(webhookReference),Number(webhookAmount));
-      db.auditLogs.push({
-        id: 'log_' + Date.now(),
-        action: 'WEBHOOK_PAYMENT_CONFIRMED',
-        details: { orderId, amount: order.totalAmount, reference: order.transactionReference },
-        timestamp: new Date().toISOString(),
-      });
-      saveDb(db);
-    } else if (status === 'failed' || status === 'cancelled') {
-      order.status = 'failed';
-      saveDb(db);
-    }
-
-    res.json({ received: true, status: order.status });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+    order.status='failed';await persistOrder(order);return res.status(200).json({received:true,status:'failed'});
+  }catch(e:any){console.error('[webhook] traitement échoué:',String(e?.message||'unknown'));return res.status(500).json({error:'Webhook non traité'});}
 });
 
 // Helper: Fulfill order atomically
