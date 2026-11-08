@@ -745,7 +745,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed') {
-        await fulfillOrder(order,String(verifiedPayment?.reference||order.transactionReference),Number(verifiedPayment?.amount??order.totalAmount));
+        await fulfillOrder(order,String(gpData?.reference||gpData?.data?.reference||order.transactionReference),Number(gpData?.amount??gpData?.data?.amount??order.totalAmount));
         const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
         return res.json({status:'completed',order,tickets,digitalPurchases});
       } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
