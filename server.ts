@@ -745,7 +745,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed') {
-        await fulfillOrder(order,String(gpData?.reference||gpData?.data?.reference||order.transactionReference),Number(gpData?.amount??gpData?.data?.amount??order.totalAmount));
+        await fulfillOrder(order,String(verifiedPayment?.reference||order.transactionReference),Number(verifiedPayment?.amount??order.totalAmount));
         const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
         return res.json({status:'completed',order,tickets,digitalPurchases});
       } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
@@ -822,7 +822,7 @@ app.post('/api/orders/confirm', async (req, res) => {
   }
 
   // 2. Interrogation directe de la passerelle pour vérifier l'authenticité
-  let isVerified = false;
+  let isVerified = false;let verifiedPayment:any=null;
   try {
     const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/, '');
     if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
@@ -836,7 +836,7 @@ app.post('/api/orders/confirm', async (req, res) => {
     });
 
     if (gpRes.ok) {
-      const gpData = await gpRes.json();
+      const gpData = await gpRes.json();verifiedPayment=gpData?.data||gpData;
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed' || gatewayStatus === 'paid') {
