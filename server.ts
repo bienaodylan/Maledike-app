@@ -1031,12 +1031,15 @@ app.post('/api/admin/digital-products', requireAdmin, (req, res) => {
   res.json({ success: true, product: newProd });
 });
 
-app.get('/api/digital-products/mine', (req, res) => {
-  const userId = req.query.userId as string;
-  if (!userId) return res.status(400).json({ error: 'userId requis' });
-  db = readDb();
-  const myPurchases = db.userDigitalPurchases.filter(p => p.userId === userId);
-  res.json(myPurchases);
+app.get('/api/digital-products/mine', async (req, res) => {
+  const authorization=req.headers.authorization||'';
+  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
+  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
+  const {data,error}=await supabaseAuth.auth.getUser(token);
+  if(error||!data.user)return res.status(401).json({error:'Session invalide.'});
+  db=readDb();
+  res.setHeader('Cache-Control','no-store');
+  return res.json(db.userDigitalPurchases.filter(p=>p.userId===data.user.id));
 });
 
 app.get('/api/digital-products/download/:purchaseId', (req, res) => {
@@ -1374,17 +1377,16 @@ app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => {
 });
 
 // ----------------- 8. TICKETS & USER PASSES -----------------
-app.get('/api/tickets/mine', (req, res) => {
-  const userId = req.query.userId as string;
-  if (!userId) return res.status(400).json({ error: 'User ID requis' });
-
-  db = readDb();
-  const myTickets = db.tickets.filter(t => t.userId === userId && t.status !== 'cancelled');
-  res.json({
-    tickets: myTickets,
-    secretLocationRevealed: db.event.isSecretLocationRevealed,
-    secretLocationAddress: db.event.isSecretLocationRevealed ? db.event.secretLocationAddress : null,
-  });
+app.get('/api/tickets/mine', async (req, res) => {
+  const authorization=req.headers.authorization||'';
+  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
+  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
+  const {data,error}=await supabaseAuth.auth.getUser(token);
+  if(error||!data.user)return res.status(401).json({error:'Session invalide.'});
+  db=readDb();
+  const myTickets=db.tickets.filter(t=>t.userId===data.user.id&&t.status!=='cancelled');
+  res.setHeader('Cache-Control','no-store');
+  return res.json({tickets:myTickets,secretLocationRevealed:db.event.isSecretLocationRevealed,secretLocationAddress:db.event.isSecretLocationRevealed?db.event.secretLocationAddress:null});
 });
 
 app.post('/api/tickets/scan', (req, res) => {
