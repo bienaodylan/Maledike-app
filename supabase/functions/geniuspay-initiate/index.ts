@@ -3,10 +3,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+const allowedOrigin = Deno.env.get('APP_URL') || '';
+const corsHeaders = (origin:string|null) => ({'Access-Control-Allow-Origin':origin===allowedOrigin?allowedOrigin:'null','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Vary':'Origin'});
 
 interface InitiatePaymentRequest {
   orderId: string;
@@ -16,17 +14,16 @@ interface InitiatePaymentRequest {
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response('ok',{headers:corsHeaders(req.headers.get('origin'))});
+  if(req.headers.get('origin')!==allowedOrigin)return new Response(JSON.stringify({error:'Origin not allowed'}),{status:403,headers:{...corsHeaders(req.headers.get('origin')),'Content-Type':'application/json'}});
 
   try {
     const GENIUSPAY_SECRET_KEY = Deno.env.get("GENIUSPAY_SECRET_KEY");
-    const GENIUSPAY_PUBLIC_KEY = Deno.env.get("GENIUSPAY_PUBLIC_KEY") || "pk_live_1TBOO1m7rmcHRYnrCHW7VSmMgY2xUrxq";
+    const GENIUSPAY_PUBLIC_KEY = Deno.env.get("GENIUSPAY_PUBLIC_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!GENIUSPAY_SECRET_KEY) {
+    if (!GENIUSPAY_SECRET_KEY || !GENIUSPAY_PUBLIC_KEY) {
       throw new Error("GENIUSPAY_SECRET_KEY non configurée dans le Supabase Vault.");
     }
 
