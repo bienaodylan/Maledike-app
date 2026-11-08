@@ -855,7 +855,7 @@ app.post('/api/orders/confirm', async (req, res) => {
   }
 
   if (isVerified) {
-    await fulfillOrder(order,String(gpData?.reference||gpData?.data?.reference||order.transactionReference),Number(gpData?.amount??gpData?.data?.amount??order.totalAmount));
+    await fulfillOrder(order,String(verifiedPayment?.reference||order.transactionReference),Number(verifiedPayment?.amount??order.totalAmount));
     db.auditLogs.push({
       id: 'log_conf_' + Date.now(),
       action: 'ORDER_CONFIRMED_GATEWAY_CERTIFIED',
