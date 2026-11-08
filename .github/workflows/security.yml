@@ -29,3 +29,16 @@ jobs:
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm audit --audit-level=high
       - run: npm run build
+      - run: npm run lint
+      - run: npm run dev > /tmp/maledike-server.log 2>&1 &
+      - run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/admin/orders || true)
+            [ "$code" = "401" ] && exit 0
+            sleep 2
+          done
+          cat /tmp/maledike-server.log
+          exit 1
+      - run: node tests/security-smoke.mjs
+        env:
+          SECURITY_TEST_BASE_URL: http://127.0.0.1:3000
