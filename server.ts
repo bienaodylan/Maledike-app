@@ -246,6 +246,18 @@ const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
 const ROOT_ADMIN_EMAIL = 'bienaodylan428@gmail.com';
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const adminEmail = (req.headers['x-admin-email'] || req.query.adminEmail || '').toString().toLowerCase().trim();
+  if (adminEmail === ROOT_ADMIN_EMAIL || adminEmail === 'bienaodylan428@gmail.com') {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    error: 'Accès refusé. Cette ressource est strictement réservée à l\'administrateur certifié (bienaodylan428@gmail.com).',
+  });
+}
+
 function orderToRow(order: any) {
   return { id: order.id, user_id: order.userId, buyer_name: order.buyerName, buyer_email: order.buyerEmail,
     buyer_whatsapp: order.buyerWhatsApp, country_code: order.countryCode, quantity: order.quantity,
@@ -394,7 +406,7 @@ app.get('/api/event', (_req, res) => {
   });
 });
 
-app.post('/api/event/update', (req, res) => {
+app.post('/api/event/update', requireAdmin, (req, res) => {
   db = readDb();
   const { totalCapacity, secretLocationAddress, isSecretLocationRevealed, ticketPrice } = req.body;
   if (totalCapacity !== undefined) db.event.totalCapacity = Number(totalCapacity);
@@ -410,7 +422,7 @@ app.get('/api/site-assets', (_req, res) => {
   res.json(db.siteAssets);
 });
 
-app.post('/api/site-assets/update', (req, res) => {
+app.post('/api/site-assets/update', requireAdmin, (req, res) => {
   db = readDb();
   const { backgroundImageUrl, heroFlyerUrl, moodImage1, moodImage2, galleryImages } = req.body;
   if (backgroundImageUrl) db.siteAssets.backgroundImageUrl = backgroundImageUrl;
@@ -423,7 +435,7 @@ app.post('/api/site-assets/update', (req, res) => {
 });
 
 // Upload route for visual assets (hero flyer, background, mood, gallery)
-app.post('/api/upload', (req, res) => {
+app.post('/api/upload', requireAdmin, (req, res) => {
   try {
     const { fileData, fileName } = req.body;
     if (!fileData) {
@@ -980,7 +992,9 @@ app.post('/api/orders/confirm', async (req, res) => {
   });
 });
 
-// ----------------- 4. DIGITAL PRODUCTS -----------------
+// ----------------- 4. DIGITAL PRODUCTS & ADMIN PROTECTION -----------------
+app.use('/api/admin', requireAdmin);
+
 app.get('/api/digital-products', (_req, res) => {
   db = readDb();
   res.json(db.digitalProducts.filter(p => p.isActive));

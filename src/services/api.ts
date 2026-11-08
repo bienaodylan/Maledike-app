@@ -27,6 +27,15 @@ async function readApiJson<T = any>(res: Response): Promise<T> {
   catch { throw new Error(`Réponse API invalide (HTTP ${res.status}). ${raw.slice(0, 180) || 'Réponse vide'}`); }
 }
 
+function getAdminHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const user = api.getSavedUser();
+  const headers: Record<string, string> = { ...extra };
+  if (user?.email) {
+    headers['x-admin-email'] = user.email.toLowerCase().trim();
+  }
+  return headers;
+}
+
 const STORAGE_KEYS = {
   USER: 'maledike_auth_user',
   PENDING_ORDER: 'maledike_pending_order',
@@ -66,7 +75,7 @@ export const api = {
   async updateEvent(updates: Partial<EventConfig>): Promise<{ success: boolean; event: EventConfig }> {
     const res = await fetch(`${API_BASE}/event/update`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(updates),
     });
     return readApiJson(res);
@@ -97,7 +106,7 @@ export const api = {
   async updateSiteAssets(assets: Partial<SiteAssets>): Promise<{ success: boolean; siteAssets: SiteAssets }> {
     const res = await fetch(`${API_BASE}/site-assets/update`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(assets),
     });
     return res.json();
@@ -111,7 +120,7 @@ export const api = {
           const fileData = reader.result as string;
           const res = await fetch(`${API_BASE}/upload`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ fileData, fileName: file.name }),
           });
           const json = await res.json();
@@ -261,7 +270,7 @@ export const api = {
   async createDigitalProduct(data: Partial<DigitalProduct>): Promise<{ success: boolean; product?: DigitalProduct }> {
     const res = await fetch(`${API_BASE}/admin/digital-products`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(data),
     });
     return res.json();
@@ -298,14 +307,16 @@ export const api = {
 
   // 7. Scanner Access Tokens
   async getScannerTokens(): Promise<ScannerToken[]> {
-    const res = await fetch(`${API_BASE}/admin/scanner-tokens`);
+    const res = await fetch(`${API_BASE}/admin/scanner-tokens`, {
+      headers: getAdminHeaders(),
+    });
     return res.json();
   },
 
   async createScannerToken(agentName: string, gateName?: string): Promise<{ success: boolean; scannerToken?: ScannerToken }> {
     const res = await fetch(`${API_BASE}/admin/scanner-tokens`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ agentName, gateName }),
     });
     return res.json();
@@ -314,7 +325,7 @@ export const api = {
   async revokeScannerToken(tokenId: string): Promise<{ success: boolean }> {
     const res = await fetch(`${API_BASE}/admin/scanner-tokens/revoke`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ tokenId }),
     });
     return res.json();
@@ -367,24 +378,30 @@ export const api = {
     operatorData: OperatorSalesData[];
     recentOrders: Order[];
   }> {
-    const res = await fetch(`${API_BASE}/admin/analytics`);
+    const res = await fetch(`${API_BASE}/admin/analytics`, {
+      headers: getAdminHeaders(),
+    });
     return res.json();
   },
 
   async getAdminOrders(): Promise<Order[]> {
-    const res = await fetch(`${API_BASE}/admin/orders`);
+    const res = await fetch(`${API_BASE}/admin/orders`, {
+      headers: getAdminHeaders(),
+    });
     return res.json();
   },
 
   async getAdminTickets(): Promise<Ticket[]> {
-    const res = await fetch(`${API_BASE}/admin/tickets`);
+    const res = await fetch(`${API_BASE}/admin/tickets`, {
+      headers: getAdminHeaders(),
+    });
     return res.json();
   },
 
   async cancelTicket(ticketId: string): Promise<{ success: boolean; ticket?: Ticket }> {
     const res = await fetch(`${API_BASE}/admin/tickets/cancel`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ ticketId }),
     });
     return res.json();
@@ -396,14 +413,16 @@ export const api = {
     secretKeyMasked: string;
     webhookSecretConfigured: boolean;
   }> {
-    const res = await fetch(`${API_BASE}/admin/gateway-config`);
+    const res = await fetch(`${API_BASE}/admin/gateway-config`, {
+      headers: getAdminHeaders(),
+    });
     return res.json();
   },
 
   async updateGatewayConfig(config: Partial<GatewayConfig>): Promise<{ success: boolean; gatewayConfig?: GatewayConfig }> {
     const res = await fetch(`${API_BASE}/admin/gateway-config`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(config),
     });
     return res.json();
@@ -412,7 +431,7 @@ export const api = {
   async purgeTestData(): Promise<{ success: boolean; purgedCount: number; remainingTickets: number }> {
     const res = await fetch(`${API_BASE}/admin/purge-test-data`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
     });
     return res.json();
   },

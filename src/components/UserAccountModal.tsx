@@ -412,7 +412,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({
 
         {/* Footer Actions */}
         <div className="pt-6 mt-6 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
-          {currentUser.role === 'admin' && (
+          {currentUser.role === 'admin' && currentUser.email?.toLowerCase().trim() === 'bienaodylan428@gmail.com' && (
             <button
               onClick={() => {
                 onClose();

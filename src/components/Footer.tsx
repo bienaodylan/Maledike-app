@@ -50,7 +50,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAccount, onOpenAdmin, conc
               <Phone className="w-3 h-3 text-emerald-400" />
               <span>Conciergerie Privée VIP</span>
             </a>
-            {currentUser && (currentUser.role === 'admin' || currentUser.email?.toLowerCase() === 'bienaodylan428@gmail.com') && (
+            {currentUser && currentUser.role === 'admin' && currentUser.email?.toLowerCase().trim() === 'bienaodylan428@gmail.com' && (
               <button
                 onClick={onOpenAdmin}
                 className="hover:text-emerald-400 transition-colors cursor-pointer text-emerald-400 font-extrabold"

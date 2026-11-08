@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import {
   ShieldCheck,
+  ShieldAlert,
   TrendingUp,
   Ticket as TicketIcon,
   Users,
@@ -78,9 +79,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onSiteAssetsUpdated,
   currentUser,
 }) => {
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
-  const [adminPasscodeInput, setAdminPasscodeInput] = useState<string>('');
-  const [authError, setAuthError] = useState<string | null>(null);
+  const isDylanAdmin = Boolean(
+    currentUser &&
+    currentUser.role === 'admin' &&
+    currentUser.email?.toLowerCase().trim() === 'bienaodylan428@gmail.com'
+  );
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(isDylanAdmin);
 
   type AdminTab = 'overview' | 'orders' | 'scanner' | 'scanner-links' | 'digital-products' | 'gateway' | 'customization';
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
@@ -182,18 +186,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [siteAssets]);
 
   useEffect(() => {
-    if (currentUser && currentUser.role === 'admin') {
-      setIsAdminAuthenticated(true);
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (isOpen && isAdminAuthenticated) {
-      loadDashboardData();
-    }
-  }, [isOpen, isAdminAuthenticated]);
+    setIsAdminAuthenticated(isDylanAdmin);
+  }, [isDylanAdmin]);
 
   const loadDashboardData = async () => {
+    if (!isDylanAdmin) return;
     try {
       const [analyticsData, ordersData, ticketsData, tokensData, prodsData, gwData] = await Promise.all([
         api.getAnalytics(),
@@ -214,19 +211,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (
-      adminPasscodeInput === 'maledike2026' ||
-      adminPasscodeInput === 'admin2026' ||
-      (currentUser && currentUser.role === 'admin')
-    ) {
-      setIsAdminAuthenticated(true);
-      setAuthError(null);
-    } else {
-      setAuthError('Code d\'accès administrateur incorrect.');
+  useEffect(() => {
+    if (isOpen && isAdminAuthenticated && isDylanAdmin) {
+      loadDashboardData();
     }
-  };
+  }, [isOpen, isAdminAuthenticated, isDylanAdmin]);
 
   // Perform atomic Check-in Scan
   const handlePerformScan = async (hashToScan?: string) => {
@@ -529,41 +518,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* AUTH GATEWAY SCREEN IF NOT LOGGED IN */}
         {!isAdminAuthenticated ? (
           <div className="p-8 sm:p-14 text-center max-w-md mx-auto my-auto space-y-6">
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.3)]">
-              <Lock className="w-8 h-8" />
+            <div className="w-16 h-16 rounded-3xl bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(239,68,68,0.3)]">
+              <ShieldAlert className="w-8 h-8" />
             </div>
-            <div>
-              <h3 className="text-2xl font-black uppercase text-white font-display">
-                Accès Superviseur
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black uppercase text-white font-display tracking-tight">
+                Accès Strictement Restreint
               </h3>
-              <p className="text-xs text-white/60 mt-1">
-                Espace réservé à la direction Mireza Caribbean et au staff technique MALÉDIKÉ.
+              <p className="text-xs text-white/70 leading-relaxed">
+                Ce portail d'administration et de gestion des finances est strictement réservé au compte super-administrateur (<span className="text-emerald-400 font-bold font-mono">bienaodylan428@gmail.com</span>).
+              </p>
+              <p className="text-[11px] text-white/40">
+                Les comptes abonnés et visiteurs ne sont pas autorisés à accéder à cet espace.
               </p>
             </div>
 
-            {authError && (
-              <div className="p-3.5 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <span>{authError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleAdminLogin} className="space-y-4">
-              <input
-                type="password"
-                placeholder="Entrez le mot de passe admin (maledike2026)"
-                value={adminPasscodeInput}
-                onChange={e => setAdminPasscodeInput(e.target.value)}
-                className="w-full bg-black/70 border border-white/20 rounded-xl px-4 py-3.5 text-center text-sm font-mono tracking-widest text-white placeholder-white/40 focus:outline-none focus:border-emerald-500"
-                autoFocus
-              />
+            <div className="pt-2">
               <button
-                type="submit"
-                className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-sm uppercase tracking-wider cursor-pointer shadow-xl"
+                type="button"
+                onClick={onClose}
+                className="w-full glass-emerald-btn py-3.5 rounded-xl text-black font-extrabold text-xs uppercase tracking-wider cursor-pointer shadow-xl"
               >
-                Déverrouiller le Tableau de Bord
+                ← Retourner au site public
               </button>
-            </form>
+            </div>
           </div>
         ) : (
           /* AUTHENTICATED TABS & VIEWS */

@@ -84,7 +84,19 @@ export default function App() {
       }
 
       if (hash === '#admin' || path === '/admin') {
-        setIsAdminOpen(true);
+        const savedUser = api.getSavedUser();
+        const isAdmin = Boolean(
+          savedUser &&
+          savedUser.role === 'admin' &&
+          savedUser.email?.toLowerCase().trim() === 'bienaodylan428@gmail.com'
+        );
+        if (isAdmin) {
+          setIsAdminOpen(true);
+        } else {
+          setIsAdminOpen(false);
+          if (hash === '#admin') window.location.hash = '';
+          if (path === '/admin') window.history.replaceState(null, '', '/');
+        }
       }
 
       if (hash.includes('success') || params.has('orderId')) {
@@ -145,6 +157,16 @@ export default function App() {
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const handleOpenAdmin = () => {
+    if (
+      currentUser &&
+      currentUser.role === 'admin' &&
+      currentUser.email?.toLowerCase().trim() === 'bienaodylan428@gmail.com'
+    ) {
+      setIsAdminOpen(true);
+    }
+  };
+
   if (isScannerRoute) {
     return (
       <AgentScannerView
@@ -203,7 +225,7 @@ export default function App() {
           setPendingAuthQuantity(undefined);
           setIsAuthOpen(true);
         }}
-        onOpenAdmin={() => setIsAdminOpen(true)}
+        onOpenAdmin={handleOpenAdmin}
         onOpenDrawer={() => setIsDrawerOpen(true)}
       />
 
@@ -218,7 +240,7 @@ export default function App() {
           setPendingAuthQuantity(undefined);
           setIsAuthOpen(true);
         }}
-        onOpenAdmin={() => setIsAdminOpen(true)}
+        onOpenAdmin={handleOpenAdmin}
         conciergePhone={event.conciergeDisplayPhone}
       />
 
@@ -264,7 +286,7 @@ export default function App() {
       <Footer
         currentUser={currentUser}
         onOpenAccount={() => setIsAccountOpen(true)}
-        onOpenAdmin={() => setIsAdminOpen(true)}
+        onOpenAdmin={handleOpenAdmin}
         conciergePhone={event.conciergeDisplayPhone}
       />
 
@@ -297,7 +319,7 @@ export default function App() {
           currentUser={currentUser}
           onUserUpdate={updated => setCurrentUser(updated)}
           onLogout={handleLogout}
-          onOpenAdmin={() => setIsAdminOpen(true)}
+          onOpenAdmin={handleOpenAdmin}
           onOpenBooking={() => handleOpenBooking(1, 'pass_vip')}
         />
       )}
