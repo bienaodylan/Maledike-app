@@ -26,7 +26,7 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(express.json({
-  limit: '50mb',
+  limit: '100kb',
   verify: (req: any, _res, buf) => {
     req.rawBody = buf;
   }
@@ -259,7 +259,15 @@ const supabaseAdmin = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_R
 const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
-const ROOT_ADMIN_EMAIL = (process.env.ROOT_ADMIN_EMAIL || 'bienaodylan428@gmail.com').toLowerCase().trim();
+const ROOT_ADMIN_EMAIL = (process.env.ROOT_ADMIN_EMAIL || '').toLowerCase().trim();
+if (!ROOT_ADMIN_EMAIL) console.error('[security] ROOT_ADMIN_EMAIL absent: founder/admin routes disabled.');
+const APP_URL = (process.env.APP_URL || '').replace(/\\/+$/, '');
+const memoryRateLimits = new Map<string, {count:number;reset:number}>();
+async function rateLimitHit(key:string,limit:number,windowSeconds:number):Promise<boolean>{
+  if(supabaseAdmin){const {data,error}=await supabaseAdmin.rpc('rate_limit_hit',{p_key:key,p_limit:limit,p_window_seconds:windowSeconds});if(!error&&typeof data==='boolean')return data;}
+  const now=Date.now(),entry=memoryRateLimits.get(key);if(!entry||entry.reset<=now){memoryRateLimits.set(key,{count:1,reset:now+windowSeconds*1000});return true;}entry.count++;return entry.count<=limit;
+}
+function clientIp(req:express.Request){return String(req.headers['x-vercel-forwarded-for']||req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0].trim();}
 
 async function getVerifiedUser(req: express.Request) {
   const authorization = req.headers.authorization || '';
@@ -275,7 +283,7 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
     const email=user?.email?.toLowerCase().trim();
     if(!user) return res.status(401).json({success:false,error:'Session invalide.'});
     if(!user.email_confirmed_at) return res.status(403).json({success:false,error:'Email fondateur non confirmé.'});
-    if(email!==ROOT_ADMIN_EMAIL||!supabaseAdmin) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
+    if(!ROOT_ADMIN_EMAIL||email!==ROOT_ADMIN_EMAIL||!supabaseAdmin) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
     const {data:role,error:roleError}=await supabaseAdmin.from('user_roles').select('role').eq('user_id',user.id).maybeSingle();
     if(roleError||role?.role!=='founder') return res.status(403).json({success:false,error:'Rôle fondateur requis.'});
     return next();
@@ -569,89 +577,20 @@ app.post('/api/auth/update-profile', async (req, res) => {
 
 // ----------------- 3. ORDERS & GENIUS PAY REAL PAYMENT GATEWAY -----------------
 app.post('/api/orders/create', async (req, res) => {
-  const authorization=req.headers.authorization||'';
-  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
-  if(!token||!supabaseAuth)return res.status(401).json({success:false,error:'Connexion requise pour réserver.'});
-  const {data:authData,error:authError}=await supabaseAuth.auth.getUser(token);
-  if(authError||!authData.user)return res.status(401).json({success:false,error:'Session invalide.'});
-  db = readDb();
-  const { buyerName, buyerEmail, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
-  const userId=authData.user.id;
-
-  if (!quantity || !Number.isInteger(Number(quantity)) || quantity < 1 || quantity > 10) {
-    return res.status(400).json({ error: 'Paramètres de réservation invalides.' });
-  }
-
-  // Stock check from durable records; only non-expired pending orders reserve capacity.
-  let activeTickets=db.tickets.filter(t=>t.status!=='cancelled').length;
-  let pendingReservations=0;
-  if(supabaseAdmin){
-    const [ticketCount,pending]=await Promise.all([
-      supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled'),
-      supabaseAdmin.from('orders').select('quantity').eq('status','pending').gte('reservation_expires_at',new Date().toISOString())
-    ]);
-    if(ticketCount.error||pending.error)return res.status(503).json({error:'Stock indisponible temporairement. Réessayez.'});
-    activeTickets=ticketCount.count||0;
-    pendingReservations=(pending.data||[]).reduce((sum,o)=>sum+Number(o.quantity||0),0);
-  }
-  if(activeTickets+pendingReservations+quantity>db.event.totalCapacity){
-    return res.status(400).json({error:'Désolé, les places sont épuisées pour cette quantité.'});
-  }
-
-  const SALON_PRICES: Record<string, { price: number; name: string }> = {
-    pass_vip: { price: db.event.ticketPrice || 10000, name: 'Passe-Entrée VIP' },
-    salon_twerk: { price: 50000, name: 'Salon Twerk (5 places assises)' },
-    salon_pole_dance: { price: 100000, name: 'Salon Pole Dance (10 places assises)' },
-    salon_sexy_nana: { price: 150000, name: 'Salon Sexy Nana (15 places assises)' },
-  };
-
-  const selectedCategory = category && SALON_PRICES[category] ? category : 'pass_vip';
-  const unitPrice = SALON_PRICES[selectedCategory].price;
-  const categoryName = SALON_PRICES[selectedCategory].name;
-
-  let totalAmount = unitPrice * quantity;
-  
-  if (Array.isArray(digitalProductIds) && digitalProductIds.length > 0) {
-    const products = db.digitalProducts.filter(p => digitalProductIds.includes(p.id) && p.isActive);
-    const digitalCost = products.reduce((sum, p) => sum + p.price, 0);
-    totalAmount += digitalCost;
-  }
-
-  const orderId = 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-  const reservationExpiresAt = Date.now() + 15 * 60 * 1000;
-
-  const newOrder = {
-    id: orderId,
-    userId,
-    buyerName,
-    buyerEmail,
-    buyerWhatsApp,
-    countryCode: countryCode || '+225',
-    quantity,
-    unitPrice,
-    totalAmount,
-    currency: db.event.currency,
-    category: selectedCategory,
-    categoryName,
-    paymentMethod: 'wave',
-    paymentPhone: (countryCode || '+225') + buyerWhatsApp,
-    transactionReference: 'GP_TXN_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6).toUpperCase(),
-    status: 'pending' as const,
-    reservationExpiresAt,
-    digitalProductIds: digitalProductIds || [],
-    createdAt: new Date().toISOString(),
-  };
-
-  db.orders.push(newOrder);
-  try { await persistOrder(newOrder); } catch (e: any) { console.error('Supabase order insert failed:', e.message); return res.status(500).json({ error: 'Impossible d’enregistrer la commande. Réessayez.' }); }
-  saveDb(db);
-
-  res.json({
-    success: true,
-    order: newOrder,
-    geniusPayPublicKey: db.gatewayConfig.publicKey,
-    env: db.gatewayConfig.env,
-  });
+  const user=await getVerifiedUser(req);
+  if(!user) return res.status(401).json({success:false,error:'Connexion requise pour réserver.'});
+  if(!supabaseAdmin) return res.status(503).json({success:false,error:'Réservation indisponible.'});
+  if(!await rateLimitHit('order:'+user.id,5,3600)) return res.status(429).json({success:false,error:'Trop de tentatives. Réessayez plus tard.'});
+  const {buyerName,buyerWhatsApp,countryCode,quantity,digitalProductIds,category}=req.body||{};
+  if(typeof quantity!=='number'||!Number.isInteger(quantity)||quantity<1||quantity>10) return res.status(400).json({success:false,error:'Quantité invalide (1 à 10).'});
+  if(typeof buyerName!=='string'||buyerName.trim().length<2||buyerName.length>120||typeof buyerWhatsApp!=='string'||buyerWhatsApp.trim().length<6||buyerWhatsApp.length>25) return res.status(400).json({success:false,error:'Informations acheteur invalides.'});
+  if(category!==undefined&&!['pass_vip','salon_twerk','salon_pole_dance','salon_sexy_nana'].includes(category)) return res.status(400).json({success:false,error:'Catégorie invalide.'});
+  if(countryCode!==undefined&&(typeof countryCode!=='string'||countryCode.length>6)) return res.status(400).json({success:false,error:'Indicatif invalide.'});
+  if(digitalProductIds!==undefined&&(!Array.isArray(digitalProductIds)||digitalProductIds.length>20||digitalProductIds.some((x:any)=>typeof x!=='string'||x.length>100))) return res.status(400).json({success:false,error:'Options numériques invalides.'});
+  const {data,error}=await supabaseAdmin.rpc('create_order_atomic',{p_user_id:user.id,p_category:category||'pass_vip',p_quantity:quantity,p_buyer_name:buyerName.trim(),p_buyer_email:user.email,p_buyer_whatsapp:buyerWhatsApp.trim(),p_country_code:countryCode||'+225',p_digital_ids:digitalProductIds||[]});
+  if(error){const code=String(error.message||'').match(/INVALID_QUANTITY|INVALID_CATEGORY|INVALID_BUYER|INVALID_PRODUCT|TOO_MANY_PENDING|SOLD_OUT|EVENT_NOT_FOUND/)?.[0];const status=code==='SOLD_OUT'?409:code==='TOO_MANY_PENDING'?429:code?400:503;return res.status(status).json({success:false,error:code==='SOLD_OUT'?'Places épuisées.':code==='TOO_MANY_PENDING'?'Deux réservations actives maximum.':code==='INVALID_PRODUCT'?'Option numérique invalide.':code==='INVALID_BUYER'?'Informations acheteur invalides.':code==='INVALID_QUANTITY'?'Quantité invalide.':code==='INVALID_CATEGORY'?'Catégorie invalide.':'Réservation indisponible.'});}
+  const order=data?.order||data;if(!order?.id)return res.status(503).json({success:false,error:'Réservation indisponible.'});
+  return res.json({success:true,order,geniusPayPublicKey:process.env.GENIUSPAY_PUBLIC_KEY||'',env:process.env.GENIUSPAY_ENV||'production'});
 });
 
 // Real Genius Pay Transaction Initiation (Server-to-Server) - AUTH FIX CORRIGÉ
