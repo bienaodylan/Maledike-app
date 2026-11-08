@@ -212,7 +212,7 @@ export const api = {
   }): Promise<{ success: boolean; order?: Order; error?: string; geniusPayPublicKey?: string; env?: string }> {
     const res = await fetch(`${API_BASE}/orders/create`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(data),
     });
     return res.json();
