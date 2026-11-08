@@ -205,7 +205,7 @@ function readDb(): DatabaseSchema {
       {
         id: 'admin_root_1',
         email: 'bienaodylan428@gmail.com',
-        passwordHash: 'maledike2026',
+        passwordHash: '',
         firstName: 'Dylan',
         lastName: 'Bienao',
         whatsappNumber: '0150049489',
