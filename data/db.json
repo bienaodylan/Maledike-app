@@ -65,24 +65,12 @@
     }
   ],
   "userDigitalPurchases": [],
-  "scannerTokens": [
-    {
-      "id": "scan_tok_main_gate",
-      "token": "sct_9f8e21a4bc88",
-      "agentName": "Agent Filtrage Entrée Principale",
-      "gateName": "Entrée Principale VIP",
-      "eventId": "maledike-party-2026",
-      "isActive": true,
-      "createdAt": "2026-11-03T10:00:00Z",
-      "scanCount": 1,
-      "lastUsedAt": "2026-11-03T10:53:21.295Z"
-    }
-  ],
+  "scannerTokens": [],
   "auditLogs": [],
   "gatewayConfig": {
     "env": "production",
-    "publicKey": "pk_live_1TBOO1m7rmcHRYnrCHW7VSmMgY2xUrxq",
-    "secretKey": "sk_live_your_geniuspay_secret_key",
-    "webhookSecret": "whsec_maledike_live_2026"
+    "publicKey": "",
+    "secretKey": "",
+    "webhookSecret": ""
   }
 }
