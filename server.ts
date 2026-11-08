@@ -512,7 +512,13 @@ app.post('/api/auth/login', async (req, res) => {
   } catch(e:any) { console.error('[auth/login]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la connexion.'}); }
 });
 
-app.post('/api/auth/update-profile', (req, res) => {
+app.post('/api/auth/update-profile', async (req, res) => {
+  const authHeader=req.headers.authorization||'';
+  const token=authHeader.startsWith('Bearer ')?authHeader.slice(7).trim():'';
+  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
+  const {data:authData,error:authError}=await supabaseAuth.auth.getUser(token);
+  if(authError||!authData.user)return res.status(401).json({error:'Session invalide.'});
+  if(req.body?.userId!==authData.user.id)return res.status(403).json({error:'Modification du profil interdite.'});
   db = readDb();
   const { userId, firstName, lastName, whatsappNumber, countryCode } = req.body;
   const user = db.profiles.find(p => p.id === userId);
