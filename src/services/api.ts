@@ -180,10 +180,10 @@ export const api = {
     }
   },
 
-  async logoutUser(): Promise<void> {
+  logoutUser(): void {
     const token=localStorage.getItem('maledike_auth_token');
-    try{await fetch(`${API_BASE}/auth/logout`,{method:'POST',headers:token?{Authorization:`Bearer ${token}`}:{}});}catch{/* local cleanup remains mandatory */}
     localStorage.removeItem(STORAGE_KEYS.USER);localStorage.removeItem('maledike_auth_token');localStorage.removeItem(STORAGE_KEYS.SCANNER_TOKEN);
+    if(token)void fetch(`${API_BASE}/auth/logout`,{method:'POST',headers:{Authorization:`Bearer ${token}`}}).catch(()=>{});
   },
 
   async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {
