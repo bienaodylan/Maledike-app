@@ -273,7 +273,9 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
     const email=user?.email?.toLowerCase().trim();
     if(!user) return res.status(401).json({success:false,error:'Session invalide.'});
     if(!user.email_confirmed_at) return res.status(403).json({success:false,error:'Email fondateur non confirmé.'});
-    if(email!==ROOT_ADMIN_EMAIL) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
+    if(email!==ROOT_ADMIN_EMAIL||!supabaseAdmin) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
+    const {data:role,error:roleError}=await supabaseAdmin.from('user_roles').select('role').eq('user_id',user.id).maybeSingle();
+    if(roleError||role?.role!=='founder') return res.status(403).json({success:false,error:'Rôle fondateur requis.'});
     return next();
   } catch { return res.status(401).json({success:false,error:'Session invalide.'}); }
 }
