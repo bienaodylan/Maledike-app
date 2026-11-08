@@ -866,6 +866,20 @@ app.post('/api/payments/geniuspay/webhook', (req, res) => {
       return res.status(404).json({ error: 'Commande introuvable' });
     }
 
+    // Reject signed events whose amount/currency/reference contradict the persisted order.
+    const webhookAmount = payload.data?.amount ?? payload.amount;
+    if (webhookAmount !== undefined && Number(webhookAmount) !== order.totalAmount) {
+      return res.status(400).json({error:'Montant du webhook incohérent.'});
+    }
+    const webhookCurrency = payload.data?.currency ?? payload.currency;
+    if (webhookCurrency && !['XOF','FCFA'].includes(String(webhookCurrency).toUpperCase())) {
+      return res.status(400).json({error:'Devise du webhook incohérente.'});
+    }
+    const webhookReference = payload.data?.reference ?? payload.reference ?? payload.data?.transaction_reference;
+    if (webhookReference && order.transactionReference && String(webhookReference) !== String(order.transactionReference)) {
+      return res.status(400).json({error:'Référence de transaction incohérente.'});
+    }
+
     if (order.status === 'completed') {
       return res.json({ received: true, alreadyCompleted: true });
     }
