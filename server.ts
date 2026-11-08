@@ -1007,7 +1007,7 @@ app.get('/api/digital-products', (_req, res) => {
   res.json(db.digitalProducts.filter(p => p.isActive));
 });
 
-app.post('/api/admin/digital-products', (req, res) => {
+app.post('/api/admin/digital-products', requireAdmin, (req, res) => {
   db = readDb();
   const { title, description, price, format, fileName, fileUrl } = req.body;
   if (!title || !price || !fileName) {
