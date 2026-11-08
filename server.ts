@@ -177,9 +177,11 @@ function readDb(): DatabaseSchema {
     if (fs.existsSync(DB_PATH)) {
       const data = fs.readFileSync(DB_PATH, 'utf-8');
       const parsed = JSON.parse(data);
-      if (process.env.GENIUSPAY_SECRET_KEY && (!parsed.gatewayConfig?.secretKey || parsed.gatewayConfig.secretKey.includes('your_geniuspay'))) {
-        parsed.gatewayConfig.secretKey = process.env.GENIUSPAY_SECRET_KEY;
-      }
+      parsed.gatewayConfig=parsed.gatewayConfig||{env:'production',publicKey:'',secretKey:'',webhookSecret:''};
+      // Deployment secrets always override file-backed values; never rely on Vercel filesystem persistence.
+      if(process.env.GENIUSPAY_PUBLIC_KEY) parsed.gatewayConfig.publicKey=process.env.GENIUSPAY_PUBLIC_KEY;
+      if(process.env.GENIUSPAY_SECRET_KEY) parsed.gatewayConfig.secretKey=process.env.GENIUSPAY_SECRET_KEY;
+      if(process.env.GENIUSPAY_WEBHOOK_SECRET) parsed.gatewayConfig.webhookSecret=process.env.GENIUSPAY_WEBHOOK_SECRET;
       return parsed;
     }
   } catch (err) {
