@@ -280,7 +280,7 @@ export const api = {
 
   async getMyDigitalPurchases(userId: string): Promise<UserDigitalPurchase[]> {
     try {
-      const res = await fetch(`${API_BASE}/digital-products/mine?userId=${encodeURIComponent(userId)}`);
+      const res = await fetch(`${API_BASE}/digital-products/mine`, { headers: getAdminHeaders() });
       if (res.ok) return await res.json();
     } catch (e) {
       console.warn('API getMyDigitalPurchases fallback', e);
@@ -294,7 +294,7 @@ export const api = {
     secretLocationRevealed: boolean;
     secretLocationAddress: string | null;
   }> {
-    const res = await fetch(`${API_BASE}/tickets/mine?userId=${encodeURIComponent(userId)}`);
+    const res = await fetch(`${API_BASE}/tickets/mine`, { headers: getAdminHeaders() });
     return res.json();
   },
 
