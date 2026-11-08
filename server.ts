@@ -534,6 +534,14 @@ app.post('/api/auth/login', async (req, res) => {
   } catch(e:any) { console.error('[auth/login]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la connexion.'}); }
 });
 
+app.post('/api/auth/logout',async(req,res)=>{
+  const token=String(req.headers.authorization||'').replace(/^Bearer\\s+/i,'').trim();
+  if(!token||!supabaseAdmin)return res.status(401).json({success:false});
+  const {error}=await supabaseAdmin.auth.admin.signOut(token,'global');
+  if(error)return res.status(401).json({success:false,error:'Session non révoquée'});
+  return res.json({success:true});
+});
+
 app.post('/api/auth/update-profile',async(req,res)=>{
   const user=await getVerifiedUser(req);if(!user)return res.status(401).json({error:'Authentification requise.'});
   if(!supabaseAdmin)return res.status(503).json({error:'Profil indisponible'});
