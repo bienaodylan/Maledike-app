@@ -508,13 +508,31 @@ app.post('/api/auth/register', async (req, res) => {
     if (!email || !password || !firstName || !lastName || !whatsappNumber) return res.status(400).json({ success:false, error:'Tous les champs sont obligatoires.' });
     if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({ success:false, error:'Service d’authentification indisponible.' });
     const normalizedEmail = String(email).trim().toLowerCase();
-    const { data, error } = await supabaseAuth.auth.signUp({ email: normalizedEmail, password, options:{ data:{ first_name:String(firstName).trim(), last_name:String(lastName).trim(), whatsapp_number:String(whatsappNumber).trim(), country_code:countryCode || '+225' } } });
-    if (error) return res.status(400).json({ success:false, error:error.code==='weak_password'?'Mot de passe trop faible.':'Inscription impossible. Vérifiez les informations.' });
-    if (!data.user) return res.status(400).json({ success:false, error:'Création du compte non confirmée.' });
-    const profile={ id:data.user.id,email:normalizedEmail,first_name:String(firstName).trim(),last_name:String(lastName).trim(),whatsapp_number:String(whatsappNumber).trim(),country_code:countryCode||'+225' };
+    // Création côté Admin avec email_confirm=true : aucun lien de vérification
+    // n'est requis. La clé service-role reste exclusivement côté serveur.
+    const metadata={ first_name:String(firstName).trim(), last_name:String(lastName).trim(), whatsapp_number:String(whatsappNumber).trim(), country_code:countryCode || '+225' };
+    const { data:created, error:createError } = await supabaseAdmin.auth.admin.createUser({ email:normalizedEmail, password, email_confirm:true, user_metadata:metadata });
+    let authUser=created?.user;
+    if(createError) {
+      // Si le compte existe déjà mais n'est pas confirmé, on le confirme sans changer son mot de passe.
+      if(createError.code==='email_exists'||createError.message?.toLowerCase().includes('already')) {
+        const {data:list}=await supabaseAdmin.auth.admin.listUsers({page:1,perPage:1000});
+        authUser=list?.users?.find((u:any)=>u.email?.toLowerCase()===normalizedEmail)||null;
+        if(authUser&&!authUser.email_confirmed_at) {
+          const {data:updated,error:updateError}=await supabaseAdmin.auth.admin.updateUserById(authUser.id,{email_confirm:true,user_metadata:metadata});
+          if(updateError)return res.status(400).json({success:false,error:'Impossible de confirmer ce compte.'});
+          authUser=updated.user;
+        } else if(authUser) return res.status(409).json({success:false,error:'Ce compte existe déjà. Connectez-vous.'});
+        else return res.status(400).json({success:false,error:'Inscription impossible. Vérifiez les informations.'});
+      } else return res.status(400).json({success:false,error:createError.code==='weak_password'?'Mot de passe trop faible.':'Inscription impossible. Vérifiez les informations.'});
+    }
+    if(!authUser)return res.status(400).json({success:false,error:'Création du compte impossible.'});
+    const {data,error}=await supabaseAuth.auth.signInWithPassword({email:normalizedEmail,password});
+    if(error||!data.user||!data.session)return res.status(400).json({success:false,error:'Compte créé, connexion automatique impossible. Connectez-vous.'});
+    const profile={ id:authUser.id,email:normalizedEmail,first_name:String(firstName).trim(),last_name:String(lastName).trim(),whatsapp_number:String(whatsappNumber).trim(),country_code:countryCode||'+225' };
     const { error: profileError }=await supabaseAdmin.from('profiles').upsert(profile,{onConflict:'id'});
     if(profileError) console.error('[auth/register] profile sync:',profileError.message);
-    return res.json({success:true,needsEmailConfirmation:!data.session,accessToken:data.session?.access_token||null,user:{id:data.user.id,email:normalizedEmail,firstName:profile.first_name,lastName:profile.last_name,whatsappNumber:profile.whatsapp_number,countryCode:profile.country_code,role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:data.user.created_at}});
+    return res.json({success:true,needsEmailConfirmation:false,accessToken:data.session.access_token,user:{id:authUser.id,email:normalizedEmail,firstName:profile.first_name,lastName:profile.last_name,whatsappNumber:profile.whatsapp_number,countryCode:profile.country_code,role:normalizedEmail===ROOT_ADMIN_EMAIL?'admin':'user',createdAt:authUser.created_at}});
   } catch(e:any) { console.error('[auth/register]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la création du compte.'}); }
 });
 
