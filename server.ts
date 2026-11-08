@@ -273,7 +273,7 @@ const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   : null;
 const ROOT_ADMIN_EMAIL = (process.env.ROOT_ADMIN_EMAIL || '').toLowerCase().trim();
 if (!ROOT_ADMIN_EMAIL) console.error('[security] ROOT_ADMIN_EMAIL absent: founder/admin routes disabled.');
-const APP_URL = (process.env.APP_URL || '').replace(/\\/+$/, '');
+const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
 const memoryRateLimits = new Map<string, {count:number;reset:number}>();
 async function rateLimitHit(key:string,limit:number,windowSeconds:number):Promise<boolean>{
   if(supabaseAdmin){const {data,error}=await supabaseAdmin.rpc('rate_limit_hit',{p_key:key,p_limit:limit,p_window_seconds:windowSeconds});if(!error&&typeof data==='boolean')return data;}
@@ -729,7 +729,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
   }
 
   try {
-    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\\/+$/, '');
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/, '');
     if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
     const gpRes = await callGeniusPayApi(`${gatewayUrl}/payments/${order.transactionReference}`, {
       method: 'GET',
@@ -823,7 +823,7 @@ app.post('/api/orders/confirm', async (req, res) => {
   // 2. Interrogation directe de la passerelle pour vérifier l'authenticité
   let isVerified = false;
   try {
-    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\\/+$/, '');
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/, '');
     if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
     const gpRes = await fetch(`${gatewayUrl}/payments/${order.transactionReference}`, {
       headers: {
