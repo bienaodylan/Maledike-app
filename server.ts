@@ -1058,12 +1058,12 @@ Billet sécurisé et accès VIP garantis.`);
 });
 
 // ----------------- 5. SCANNER TOKENIZED ACCESS LINKS -----------------
-app.get('/api/admin/scanner-tokens', (_req, res) => {
+app.get('/api/admin/scanner-tokens', requireAdmin, (_req, res) => {
   db = readDb();
   res.json(db.scannerTokens);
 });
 
-app.post('/api/admin/scanner-tokens', (req, res) => {
+app.post('/api/admin/scanner-tokens', requireAdmin, (req, res) => {
   db = readDb();
   const { agentName, gateName } = req.body;
   if (!agentName) return res.status(400).json({ error: 'Nom de l\'agent requis' });
@@ -1085,7 +1085,7 @@ app.post('/api/admin/scanner-tokens', (req, res) => {
   res.json({ success: true, scannerToken: newToken });
 });
 
-app.post('/api/admin/scanner-tokens/revoke', (req, res) => {
+app.post('/api/admin/scanner-tokens/revoke', requireAdmin, (req, res) => {
   const { tokenId } = req.body;
   db = readDb();
   const tok = db.scannerTokens.find(t => t.id === tokenId);
@@ -1249,7 +1249,7 @@ app.get('/api/scanner/history/:token', (req, res) => {
 });
 
 // ----------------- 6. ANALYTICS -----------------
-app.get('/api/admin/analytics', (_req, res) => {
+app.get('/api/admin/analytics', requireAdmin, (_req, res) => {
   db = readDb();
   const completedOrders = db.orders.filter(o => o.status === 'completed');
   const pendingOrders = db.orders.filter(o => o.status === 'pending');
@@ -1319,7 +1319,7 @@ app.get('/api/admin/analytics', (_req, res) => {
 });
 
 // ----------------- 7. GATEWAY CONFIG & TEST CLEANUP -----------------
-app.get('/api/admin/gateway-config', (_req, res) => {
+app.get('/api/admin/gateway-config', requireAdmin, (_req, res) => {
   db = readDb();
   res.json({
     env: db.gatewayConfig.env,
@@ -1330,7 +1330,7 @@ app.get('/api/admin/gateway-config', (_req, res) => {
   });
 });
 
-app.post('/api/admin/gateway-config', (req, res) => {
+app.post('/api/admin/gateway-config', requireAdmin, (req, res) => {
   db = readDb();
   const { env, publicKey, secretKey, webhookSecret } = req.body;
   if (env && (env === 'sandbox' || env === 'production')) {
@@ -1352,7 +1352,7 @@ app.post('/api/admin/gateway-config', (req, res) => {
   });
 });
 
-app.post('/api/admin/purge-test-data', (_req, res) => {
+app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => {
   db = readDb();
   const beforeCount = db.tickets.length;
   db.orders = [];
@@ -1413,17 +1413,17 @@ app.post('/api/tickets/scan', (req, res) => {
   return res.json({ success: true, message: 'ACCÈS VALIDÉ ! Passe VIP autorisé.', ticket });
 });
 
-app.get('/api/admin/orders', (_req, res) => {
+app.get('/api/admin/orders', requireAdmin, (_req, res) => {
   db = readDb();
   res.json(db.orders.slice().reverse());
 });
 
-app.get('/api/admin/tickets', (_req, res) => {
+app.get('/api/admin/tickets', requireAdmin, (_req, res) => {
   db = readDb();
   res.json(db.tickets.slice().reverse());
 });
 
-app.post('/api/admin/tickets/cancel', (req, res) => {
+app.post('/api/admin/tickets/cancel', requireAdmin, (req, res) => {
   const { ticketId } = req.body;
   db = readDb();
   const ticket = db.tickets.find(t => t.id === ticketId);
