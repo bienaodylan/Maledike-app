@@ -745,6 +745,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       order.transactionReference = result.data.reference;
     }
     order.checkoutUrl = checkoutUrl;
+    await persistOrder(order);
     saveDb(db);
 
     res.json({
@@ -861,10 +862,9 @@ app.post('/api/payments/geniuspay/webhook', async (req, res) => {
       return res.status(400).json({ error: 'orderId manquant dans le webhook' });
     }
 
-    const order = db.orders.find(o => o.id === orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Commande introuvable' });
-    }
+    const order = await loadOrder(orderId);
+    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
+    if (!db.orders.some(o=>o.id===order.id)) db.orders.push(order);
 
     // Reject signed events whose amount/currency/reference contradict the persisted order.
     const webhookAmount = payload.data?.amount ?? payload.amount;
@@ -975,7 +975,9 @@ app.post('/api/orders/confirm', async (req, res) => {
   if (!user) return res.status(401).json({success:false,error:'Authentification requise.'});
   const { orderId } = req.body || {};
   db = readDb();
-  const order = db.orders.find(o => o.id === orderId && o.userId === user.id);
+  const order = await loadOrder(orderId);
+  if (!order || order.userId !== user.id) return res.status(404).json({success:false,error:'Commande introuvable'});
+  if (!db.orders.some(o=>o.id===order.id)) db.orders.push(order);
 
   if (!order) {
     return res.status(404).json({ success: false, error: 'Commande introuvable' });
