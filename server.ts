@@ -578,10 +578,20 @@ app.post('/api/orders/create', async (req, res) => {
     return res.status(400).json({ error: 'Paramètres de réservation invalides.' });
   }
 
-  // Stock check
-  const activeTickets = db.tickets.filter(t => t.status !== 'cancelled').length;
-  if (activeTickets + quantity > db.event.totalCapacity) {
-    return res.status(400).json({ error: 'Désolé, les places sont épuisées pour cette quantité.' });
+  // Stock check from durable records; only non-expired pending orders reserve capacity.
+  let activeTickets=db.tickets.filter(t=>t.status!=='cancelled').length;
+  let pendingReservations=0;
+  if(supabaseAdmin){
+    const [ticketCount,pending]=await Promise.all([
+      supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled'),
+      supabaseAdmin.from('orders').select('quantity').eq('status','pending').gte('reservation_expires_at',new Date().toISOString())
+    ]);
+    if(ticketCount.error||pending.error)return res.status(503).json({error:'Stock indisponible temporairement. Réessayez.'});
+    activeTickets=ticketCount.count||0;
+    pendingReservations=(pending.data||[]).reduce((sum,o)=>sum+Number(o.quantity||0),0);
+  }
+  if(activeTickets+pendingReservations+quantity>db.event.totalCapacity){
+    return res.status(400).json({error:'Désolé, les places sont épuisées pour cette quantité.'});
   }
 
   const SALON_PRICES: Record<string, { price: number; name: string }> = {
