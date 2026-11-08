@@ -10,3 +10,6 @@ coverage/
 # AI Studio chat uploads & screenshots
 **/Capture_d__cran_*.png
 **/screencapture-*.png
+# Runtime data must never be committed (Vercel filesystem is ephemeral).
+data/db.json
+/uploads/

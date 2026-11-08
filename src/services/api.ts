@@ -181,8 +181,9 @@ export const api = {
   },
 
   logoutUser(): void {
-    localStorage.removeItem(STORAGE_KEYS.USER);
-    localStorage.removeItem('maledike_auth_token');
+    const token=localStorage.getItem('maledike_auth_token');
+    localStorage.removeItem(STORAGE_KEYS.USER);localStorage.removeItem('maledike_auth_token');localStorage.removeItem(STORAGE_KEYS.SCANNER_TOKEN);
+    if(token)void fetch(`${API_BASE}/auth/logout`,{method:'POST',headers:{Authorization:`Bearer ${token}`}}).catch(()=>{});
   },
 
   async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {

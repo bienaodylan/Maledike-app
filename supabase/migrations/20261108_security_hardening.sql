@@ -1,19 +1,48 @@
--- MALÉDIKÉ PARTY — durcissement sécurité (2026-11-08)
--- Additif : aucune donnée existante n'est modifiée ou supprimée (hors table gateway_config vide).
+-- Security hardening RPC baseline captured from live Supabase on 2026-11-08.
+-- Required tables, ticket sequence and pgcrypto already exist; preserve audited function bodies here.
 
--- 1. Contraintes d'intégrité
-alter table public.orders drop constraint if exists orders_quantity_range;
-alter table public.orders add constraint orders_quantity_range check (quantity between 1 and 10);
-alter table public.orders drop constraint if exists orders_total_positive;
-alter table public.orders add constraint orders_total_positive check (total_amount > 0 and unit_price > 0);
-create unique index if not exists uq_orders_transaction_reference on public.orders(transaction_reference) where transaction_reference is not null and transaction_reference <> '';
-create unique index if not exists uq_udp_order_product on public.user_digital_purchases(order_id, product_id);
+CREATE OR REPLACE FUNCTION public.checkin_ticket_atomic(p_qr_token_hash text, p_scanner_token text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE a public.scanner_tokens%ROWTYPE; t public.tickets%ROWTYPE; changed_count INTEGER;
+BEGIN
+ SELECT * INTO a FROM scanner_tokens WHERE token=p_scanner_token AND is_active=true FOR UPDATE;
+ IF NOT FOUND THEN
+  INSERT INTO scanner_scan_history(scan_result,details) VALUES ('invalid_agent','{"reason":"token_invalid"}');
+  RETURN jsonb_build_object('success',false,'error','INVALID_AGENT','message','Accès agent non autorisé');
+ END IF;
+ SELECT * INTO t FROM tickets WHERE qr_token_hash=p_qr_token_hash FOR UPDATE;
+ IF NOT FOUND THEN
+  INSERT INTO scanner_scan_history(scanner_token_id,agent_name,gate_name,scan_result) VALUES(a.id,a.agent_name,a.gate_name,'not_found');
+  RETURN jsonb_build_object('success',false,'error','NOT_FOUND','message','Billet introuvable');
+ END IF;
+ IF t.status='cancelled' THEN
+  INSERT INTO scanner_scan_history(ticket_id,ticket_number,scanner_token_id,agent_name,gate_name,scan_result) VALUES(t.id,t.ticket_number,a.id,a.agent_name,a.gate_name,'cancelled');
+  RETURN jsonb_build_object('success',false,'error','CANCELLED','message','Billet annulé','ticket',to_jsonb(t));
+ END IF;
+ IF t.status='checked_in' THEN
+  INSERT INTO scanner_scan_history(ticket_id,ticket_number,scanner_token_id,agent_name,gate_name,scan_result,details) VALUES(t.id,t.ticket_number,a.id,a.agent_name,a.gate_name,'already_used',jsonb_build_object('checked_in_at',t.checked_in_at));
+  RETURN jsonb_build_object('success',false,'error','ALREADY_USED','message','Billet déjà scanné','ticket',to_jsonb(t),'alreadyCheckedInAt',t.checked_in_at);
+ END IF;
+ UPDATE tickets SET status='checked_in',checked_in_at=now(),checked_in_by_agent=a.agent_name||' ('||a.gate_name||')' WHERE id=t.id AND status='confirmed' RETURNING * INTO t;
+ GET DIAGNOSTICS changed_count=ROW_COUNT;
+ IF changed_count=0 THEN RETURN jsonb_build_object('success',false,'error','ALREADY_USED','message','Billet déjà utilisé'); END IF;
+ UPDATE scanner_tokens SET scan_count=scan_count+1,last_used_at=now() WHERE id=a.id;
+ INSERT INTO scanner_scan_history(ticket_id,ticket_number,scanner_token_id,agent_name,gate_name,scan_result) VALUES(t.id,t.ticket_number,a.id,a.agent_name,a.gate_name,'accepted');
+ INSERT INTO audit_logs(id,action,details,timestamp) VALUES('scan_'||gen_random_uuid()::text,'TICKET_CHECKED_IN',jsonb_build_object('ticketNumber',t.ticket_number,'agent',a.agent_name,'gate',a.gate_name),now());
+ RETURN jsonb_build_object('success',true,'message','ACCÈS VALIDÉ ! Passe VIP autorisé.','ticket',to_jsonb(t));
+END $function$
+;
 
--- 2. Création de commande ATOMIQUE (prix, capacité, produits : tout est décidé côté base, sous verrou)
-create or replace function public.create_order_atomic(
-  p_user_id text, p_category text, p_quantity integer, p_buyer_name text, p_buyer_email text,
-  p_buyer_whatsapp text, p_country_code text, p_digital_ids jsonb
-) returns jsonb language plpgsql security definer set search_path = public as $$
+CREATE OR REPLACE FUNCTION public.create_order_atomic(p_user_id text, p_category text, p_quantity integer, p_buyer_name text, p_buyer_email text, p_buyer_whatsapp text, p_country_code text, p_digital_ids jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 declare
   ev public.event_config%rowtype; unit integer; cname text; sold integer; held integer;
   addons integer := 0; found_n integer; req_n integer; ids jsonb; total integer; oid text; exp timestamptz; pend integer;
@@ -57,12 +86,15 @@ begin
     'buyerWhatsApp',trim(p_buyer_whatsapp),'countryCode',left(coalesce(p_country_code,'+225'),6),'quantity',p_quantity,'unitPrice',unit,
     'totalAmount',total,'currency','FCFA','paymentMethod','pending','status','pending',
     'reservationExpiresAt',(extract(epoch from exp)*1000)::bigint,'createdAt',now(),'digitalProductIds',ids,'category',p_category,'categoryName',cname);
-end $$;
+end $function$
+;
 
--- 3. Fulfillment : paiement confirmé APRÈS expiration de la réservation => billets émis si des places restent
---    (sinon ORDER_EXPIRED_NO_CAPACITY, journalisé pour remboursement manuel). QR = 256 bits aléatoires.
-create or replace function public.fulfill_geniuspay_order(p_order_id text, p_reference text, p_amount numeric)
-returns jsonb language plpgsql security definer set search_path = public as $$
+CREATE OR REPLACE FUNCTION public.fulfill_geniuspay_order(p_order_id text, p_reference text, p_amount numeric)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 declare
   o public.orders%rowtype; ev public.event_config%rowtype; n integer; inserted integer := 0; product record;
   digital_count integer := 0; sold integer; held integer;
@@ -106,15 +138,64 @@ begin
     digital_count := digital_count + 1;
   end loop;
   return jsonb_build_object('success',true,'already_completed',false,'tickets_count',inserted,'digital_purchases_count',digital_count);
-end $$;
+end $function$
+;
 
--- 4. Limiteur de débit durable (partagé entre instances serverless)
-create table if not exists public.rate_limits(
-  key text not null, window_start timestamptz not null, hits integer not null default 1, primary key (key, window_start)
-);
-alter table public.rate_limits enable row level security;
-create or replace function public.rate_limit_hit(p_key text, p_limit integer, p_window_seconds integer)
-returns boolean language plpgsql security definer set search_path = public as $$
+CREATE OR REPLACE FUNCTION public.maledike_agent_scan(p_code text, p_scanner_token text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare v_agent public.scanner_tokens%rowtype; v_ticket public.tickets%rowtype; v_now timestamptz:=now();
+begin
+ select * into v_agent from public.scanner_tokens where token=p_scanner_token and is_active=true limit 1;
+ if not found then return jsonb_build_object('success',false,'message','Accès agent non autorisé','error','UNAUTHORIZED'); end if;
+ select * into v_ticket from public.tickets where qr_token_hash=trim(p_code) or lower(ticket_number)=lower(trim(p_code)) or id=trim(p_code) limit 1 for update;
+ if not found then
+  insert into public.audit_logs(id,action,details,timestamp) values ('scan_invalid_'||gen_random_uuid()::text,'INVALID_TICKET_SCANNED',jsonb_build_object('rawInput',left(p_code,30),'agent',v_agent.agent_name,'gate',v_agent.gate_name),v_now);
+  return jsonb_build_object('success',false,'message','BILLET INTROUVABLE OU NON VALIDE','error','NOT_FOUND');
+ end if;
+ if v_ticket.status='cancelled' then
+  insert into public.audit_logs(id,action,details,timestamp) values ('scan_cancel_'||gen_random_uuid()::text,'CANCELLED_TICKET_SCANNED',jsonb_build_object('ticketNumber',v_ticket.ticket_number,'attendeeName',v_ticket.attendee_name,'agent',v_agent.agent_name,'gate',v_agent.gate_name),v_now);
+  return jsonb_build_object('success',false,'message','ATTENTION : BILLET ANNULÉ','error','CANCELLED','ticket',to_jsonb(v_ticket));
+ end if;
+ if v_ticket.status='checked_in' then
+  insert into public.audit_logs(id,action,details,timestamp) values ('scan_dup_'||gen_random_uuid()::text,'DUPLICATE_SCAN_REJECTED',jsonb_build_object('ticketNumber',v_ticket.ticket_number,'attendeeName',v_ticket.attendee_name,'alreadyCheckedInAt',v_ticket.checked_in_at,'agent',v_agent.agent_name,'gate',v_agent.gate_name),v_now);
+  return jsonb_build_object('success',false,'message','DOUBLE ENTRÉE INTERDITE ! Billet déjà scanné','error','ALREADY_USED','ticket',to_jsonb(v_ticket),'alreadyCheckedInAt',v_ticket.checked_in_at);
+ end if;
+ update public.tickets set status='checked_in',checked_in_at=v_now,checked_in_by_agent=v_agent.agent_name||' ('||v_agent.gate_name||')' where id=v_ticket.id returning * into v_ticket;
+ update public.scanner_tokens set scan_count=scan_count+1,last_used_at=v_now where id=v_agent.id;
+ insert into public.audit_logs(id,action,details,timestamp) values ('scan_'||gen_random_uuid()::text,'TICKET_CHECKED_IN',jsonb_build_object('ticketNumber',v_ticket.ticket_number,'attendeeName',v_ticket.attendee_name,'agent',v_agent.agent_name,'gate',v_agent.gate_name,'category',coalesce(v_ticket.category_name,v_ticket.category,'VIP')),v_now);
+ return jsonb_build_object('success',true,'message','ACCÈS VALIDÉ ! Passe VIP autorisé.','ticket',to_jsonb(v_ticket));
+end $function$
+;
+
+CREATE OR REPLACE FUNCTION public.maledike_scanner_history(p_scanner_token text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_agent public.scanner_tokens%rowtype;
+BEGIN
+ SELECT * INTO v_agent FROM public.scanner_tokens WHERE token=p_scanner_token AND is_active=true LIMIT 1;
+ IF NOT FOUND THEN RETURN jsonb_build_object('error','Token non autorisé'); END IF;
+ RETURN coalesce((SELECT jsonb_agg(x ORDER BY x.timestamp DESC) FROM (
+   SELECT id,action,details,timestamp FROM public.audit_logs
+   WHERE action IN ('TICKET_CHECKED_IN','DUPLICATE_SCAN_REJECTED','INVALID_TICKET_SCANNED','CANCELLED_TICKET_SCANNED')
+     AND details->>'agent'=v_agent.agent_name AND details->>'gate'=v_agent.gate_name
+   ORDER BY timestamp DESC LIMIT 100
+ ) x),'[]'::jsonb);
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.rate_limit_hit(p_key text, p_limit integer, p_window_seconds integer)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 declare w timestamptz; h integer;
 begin
   w := to_timestamp(floor(extract(epoch from now()) / p_window_seconds) * p_window_seconds);
@@ -122,29 +203,27 @@ begin
     on conflict (key, window_start) do update set hits = public.rate_limits.hits + 1 returning hits into h;
   if random() < 0.02 then delete from public.rate_limits where window_start < now() - interval '1 day'; end if;
   return h <= p_limit;
-end $$;
+end $function$
+;
 
--- 5. Droits : fonctions réservées au service_role uniquement
-revoke all on function public.create_order_atomic(text,text,integer,text,text,text,text,jsonb) from public, anon, authenticated;
-revoke all on function public.fulfill_geniuspay_order(text,text,numeric) from public, anon, authenticated;
-revoke all on function public.rate_limit_hit(text,integer,integer) from public, anon, authenticated;
-grant execute on function public.create_order_atomic(text,text,integer,text,text,text,text,jsonb) to service_role;
-grant execute on function public.fulfill_geniuspay_order(text,text,numeric) to service_role;
-grant execute on function public.rate_limit_hit(text,integer,integer) to service_role;
-
--- 6. Secrets de passerelle : jamais en base (table vide, inutilisée par le code)
-drop table if exists public.gateway_config;
-
--- 7. Policies RLS en doublon (mêmes règles, coût de performance inutile)
-drop policy if exists "Public can read active digital products" on public.digital_products;
-drop policy if exists "owner orders" on public.orders;
-drop policy if exists "owner tickets" on public.tickets;
-drop policy if exists "owner digital purchases" on public.user_digital_purchases;
-drop policy if exists "Users can read own profile" on public.profiles;
-drop policy if exists "Users can update own profile" on public.profiles;
-drop policy if exists "Public can read site assets" on public.site_assets;
-
--- 8. Bucket public pour les visuels du site (écriture réservée au service_role, types et taille restreints)
-insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
-values ('site-assets','site-assets', true, 5242880, array['image/png','image/jpeg','image/webp','image/gif'])
-on conflict (id) do update set public = true, file_size_limit = 5242880, allowed_mime_types = array['image/png','image/jpeg','image/webp','image/gif'];
+REVOKE ALL ON FUNCTION public.create_order_atomic(text,text,integer,text,text,text,text,jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.fulfill_geniuspay_order(text,text,numeric) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rate_limit_hit(text,integer,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.maledike_agent_scan(text,text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.maledike_scanner_history(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.checkin_ticket_atomic(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_order_atomic(text,text,integer,text,text,text,text,jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.fulfill_geniuspay_order(text,text,numeric) TO service_role;
+GRANT EXECUTE ON FUNCTION public.rate_limit_hit(text,integer,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.maledike_agent_scan(text,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.maledike_scanner_history(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.checkin_ticket_atomic(text,text) TO service_role;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_digital_purchases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.digital_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.site_assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.event_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.public_analytics_events ENABLE ROW LEVEL SECURITY;
