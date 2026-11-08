@@ -1059,7 +1059,14 @@ app.use('/api/admin', requireAdmin);
 
 app.get('/api/digital-products', async (_req, res) => {
   db=readDb();
-  if(supabaseAdmin){const {data,error}=await supabaseAdmin.from('digital_products').select('*').eq('is_active',true);if(error)return res.status(500).json({error:'Catalogue indisponible'});return res.json((data||[]).map(p=>({id:p.id,title:p.title,description:p.description,price:p.price,format:p.format,fileName:p.file_name,fileUrl:p.file_url,isActive:p.is_active,createdAt:p.created_at}))}
+  if(supabaseAdmin){
+    const {data,error}=await supabaseAdmin.from('digital_products').select('*').eq('is_active',true);
+    if(error) return res.status(500).json({error:'Catalogue indisponible'});
+    return res.json((data||[]).map(p=>({
+      id:p.id,title:p.title,description:p.description,price:p.price,format:p.format,
+      fileName:p.file_name,fileUrl:p.file_url,isActive:p.is_active,createdAt:p.created_at
+    })));
+  }
   return res.json(db.digitalProducts.filter(p=>p.isActive));
 });
 
