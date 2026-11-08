@@ -226,7 +226,7 @@ export const api = {
   }): Promise<{ success: boolean; session?: any; checkoutUrl?: string; error?: string }> {
     const res = await fetch(`${API_BASE}/payments/geniuspay/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(data),
     });
     return res.json();
@@ -239,7 +239,7 @@ export const api = {
     digitalPurchases?: UserDigitalPurchase[];
     expiresInSeconds?: number;
   }> {
-    const res = await fetch(`${API_BASE}/payments/status/${encodeURIComponent(orderId)}`);
+    const res = await fetch(`${API_BASE}/payments/status/${encodeURIComponent(orderId)}`, { headers: getAdminHeaders() });
     return res.json();
   },
 
@@ -252,7 +252,7 @@ export const api = {
   }> {
     const res = await fetch(`${API_BASE}/orders/confirm`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ orderId, transactionId }),
     });
     return res.json();
