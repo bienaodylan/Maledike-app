@@ -257,7 +257,7 @@ const supabaseAdmin = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_R
 const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
-const ROOT_ADMIN_EMAIL = 'bienaodylan428@gmail.com';
+const ROOT_ADMIN_EMAIL = (process.env.ROOT_ADMIN_EMAIL || 'bienaodylan428@gmail.com').toLowerCase().trim();
 
 async function getVerifiedUser(req: express.Request) {
   const authorization = req.headers.authorization || '';
@@ -272,6 +272,7 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
     const user = await getVerifiedUser(req);
     const email=user?.email?.toLowerCase().trim();
     if(!user) return res.status(401).json({success:false,error:'Session invalide.'});
+    if(!user.email_confirmed_at) return res.status(403).json({success:false,error:'Email fondateur non confirmé.'});
     if(email!==ROOT_ADMIN_EMAIL) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
     return next();
   } catch { return res.status(401).json({success:false,error:'Session invalide.'}); }
