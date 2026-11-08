@@ -664,8 +664,8 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     // Appel sécurisé à la passerelle avec la méthode de paiement sélectionnée
     let callRes = await callGeniusPayApi(`${gatewayUrl}/payments`, {
       method: 'POST',
-      
-      secretKey: db.gatewayConfig.secretKey,
+      publicKey: process.env.GENIUSPAY_PUBLIC_KEY||db.gatewayConfig.publicKey,
+      secretKey: process.env.GENIUSPAY_SECRET_KEY||db.gatewayConfig.secretKey,
       body: geniusPayPayload,
       timeoutMs: 15000,
       maxRetries: 2,
@@ -678,8 +678,8 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       delete geniusPayPayload.payment_method;
       const fallbackRes = await callGeniusPayApi(`${gatewayUrl}/payments`, {
         method: 'POST',
-        publicKey: db.gatewayConfig.publicKey,
-        secretKey: db.gatewayConfig.secretKey,
+        publicKey: process.env.GENIUSPAY_PUBLIC_KEY||db.gatewayConfig.publicKey,
+        secretKey: process.env.GENIUSPAY_SECRET_KEY||db.gatewayConfig.secretKey,
         body: geniusPayPayload,
         timeoutMs: 15000,
         maxRetries: 2,
@@ -1122,7 +1122,9 @@ app.get('/api/admin/gateway-config', requireAdmin, (_req, res) => {
   });
 });
 
-app.post('/api/admin/gateway-config', requireAdmin, (req, res) => {
+app.post('/api/admin/gateway-config', requireAdmin, (_req, res) => res.status(410).json({error:'Configuration des clés désactivée. Utilisez exclusivement les variables d’environnement Vercel.'}));
+/* DISABLED: secrets must only be configured in Vercel Environment Variables.
+app.post('/api/admin/gateway-config-legacy', requireAdmin, (req, res) => {
   db = readDb();
   const { env, publicKey, secretKey, webhookSecret } = req.body;
   if (env && (env === 'sandbox' || env === 'production')) {
@@ -1144,7 +1146,9 @@ app.post('/api/admin/gateway-config', requireAdmin, (req, res) => {
   });
 });
 
-app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => {
+app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => res.status(410).json({error:'Purge destructive désactivée en production.'}));
+/* DISABLED legacy purge route
+app.post('/api/admin/purge-test-data-legacy', requireAdmin, (_req, res) => {
   db = readDb();
   const beforeCount = db.tickets.length;
   db.orders = [];
