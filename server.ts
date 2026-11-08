@@ -306,6 +306,19 @@ async function loadOrder(orderId: string) {
   return data ? rowToOrder(data) : undefined;
 }
 
+async function loadOrderArtifacts(orderId:string) {
+  if(!supabaseAdmin) return {tickets:db.tickets.filter(t=>t.orderId===orderId),digitalPurchases:db.userDigitalPurchases.filter(p=>p.orderId===orderId)};
+  const [t,p]=await Promise.all([
+    supabaseAdmin.from('tickets').select('*').eq('order_id',orderId),
+    supabaseAdmin.from('user_digital_purchases').select('*').eq('order_id',orderId)
+  ]);
+  if(t.error||p.error) throw t.error||p.error;
+  return {
+    tickets:(t.data||[]).map(x=>({id:x.id,ticketNumber:x.ticket_number,orderId:x.order_id,userId:x.user_id,attendeeName:x.attendee_name,attendeeEmail:x.attendee_email,attendeePhone:x.attendee_phone,eventTitle:x.event_title,eventDate:x.event_date,eventTime:x.event_time,price:x.price,qrTokenHash:x.qr_token_hash,status:x.status,createdAt:x.created_at,checkedInAt:x.checked_in_at,checkedInByAgent:x.checked_in_by_agent})),
+    digitalPurchases:(p.data||[]).map(x=>({id:x.id,orderId:x.order_id,userId:x.user_id,productId:x.product_id,productTitle:x.product_title,format:x.format,fileName:x.file_name,fileUrl:x.file_url,downloadToken:x.download_token,purchasedAt:x.purchased_at}))
+  };
+}
+
 // Helper: Timing safe comparison
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -786,14 +799,8 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
 
   res.setHeader('Cache-Control','no-store');
   if (order.status === 'completed') {
-    const tickets = db.tickets.filter(t => t.orderId === orderId);
-    const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
-    return res.json({
-      status: 'completed',
-      order,
-      tickets,
-      digitalPurchases,
-    });
+    const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
+    return res.json({status:'completed',order,tickets,digitalPurchases});
   }
 
   try {
@@ -812,14 +819,8 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed') {
         await fulfillOrder(order);
-        const tickets = db.tickets.filter(t => t.orderId === orderId);
-        const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
-        return res.json({
-          status: 'completed',
-          order,
-          tickets,
-          digitalPurchases,
-        });
+        const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
+        return res.json({status:'completed',order,tickets,digitalPurchases});
       } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
         order.status = 'failed';
         saveDb(db);
@@ -985,14 +986,8 @@ app.post('/api/orders/confirm', async (req, res) => {
 
   // 1. Si déjà complétée et vérifiée
   if (order.status === 'completed') {
-    const tickets = db.tickets.filter(t => t.orderId === orderId);
-    const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
-    return res.json({
-      success: true,
-      order,
-      tickets,
-      digitalPurchases,
-    });
+    const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
+    return res.json({success:true,order,tickets,digitalPurchases});
   }
 
   // 2. Interrogation directe de la passerelle pour vérifier l'authenticité
@@ -1037,14 +1032,8 @@ app.post('/api/orders/confirm', async (req, res) => {
     });
     saveDb(db);
 
-    const tickets = db.tickets.filter(t => t.orderId === orderId);
-    const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
-    return res.json({
-      success: true,
-      order,
-      tickets,
-      digitalPurchases,
-    });
+    const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
+    return res.json({success:true,order,tickets,digitalPurchases});
   }
 
   // SÉCURITÉ ABSOLUE : Si non validé par la passerelle officielle, AUCUN BILLET N'EST ÉMIS !
