@@ -166,6 +166,7 @@ export const api = {
     const result = await readApiJson(res);
     if (result.success && result.user) {
       localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
+      if (result.accessToken) localStorage.setItem('maledike_auth_token', result.accessToken);
     }
     return result;
   },
