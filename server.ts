@@ -730,7 +730,8 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
   }
 
   try {
-    const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\\/+$/, '');
+    if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
     const gpRes = await callGeniusPayApi(`${gatewayUrl}/payments/${order.transactionReference}`, {
       method: 'GET',
       publicKey: db.gatewayConfig.publicKey,
@@ -823,7 +824,8 @@ app.post('/api/orders/confirm', async (req, res) => {
   // 2. Interrogation directe de la passerelle pour vérifier l'authenticité
   let isVerified = false;
   try {
-    const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\\/+$/, '');
+    if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
     const gpRes = await fetch(`${gatewayUrl}/payments/${order.transactionReference}`, {
       headers: {
         'X-API-Key': db.gatewayConfig.publicKey,
@@ -883,36 +885,13 @@ app.get('/api/digital-products', async (_req, res) => {
     if(error) return res.status(500).json({error:'Catalogue indisponible'});
     return res.json((data||[]).map(p=>({
       id:p.id,title:p.title,description:p.description,price:p.price,format:p.format,
-      fileName:p.file_name,fileUrl:p.file_url,isActive:p.is_active,createdAt:p.created_at
+      fileName:p.file_name,isActive:p.is_active,createdAt:p.created_at
     })));
   }
   return res.json(db.digitalProducts.filter(p=>p.isActive));
 });
 
-app.post('/api/admin/digital-products', requireAdmin, async (req, res) => {
-  db = readDb();
-  const { title, description, price, format, fileName, fileUrl } = req.body;
-  if (!title || !price || !fileName) {
-    return res.status(400).json({ error: 'Champs requis manquants' });
-  }
-
-  const newProd = {
-    id: 'prod_' + Date.now(),
-    title: title.trim(),
-    description: (description || '').trim(),
-    price: Number(price),
-    format: format || 'PDF',
-    fileName: fileName.trim(),
-    fileUrl: fileUrl || `/assets/digital/${fileName}`,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  };
-
-  if(supabaseAdmin){const {error}=await supabaseAdmin.from('digital_products').upsert({id:newProd.id,title:newProd.title,description:newProd.description,price:newProd.price,format:newProd.format,file_name:newProd.fileName,file_url:newProd.fileUrl,is_active:true,created_at:newProd.createdAt},{onConflict:'id'});if(error)return res.status(500).json({error:'Enregistrement du produit impossible'});}
-  db.digitalProducts.push(newProd);
-  saveDb(db);
-  res.json({success:true,product:newProd});
-});
+app.post('/api/admin/digital-products',requireAdmin,(_req,res)=>res.status(410).json({error:'Vente numérique désactivée jusqu’au stockage privé et à la livraison des fichiers réels.'}));
 
 app.get('/api/digital-products/mine', async (req, res) => {
   const user=await getVerifiedUser(req);
@@ -926,38 +905,7 @@ app.get('/api/digital-products/mine', async (req, res) => {
   return res.json(db.userDigitalPurchases.filter(p=>p.userId===user.id));
 });
 
-app.get('/api/digital-products/download/:purchaseId', async (req, res) => {
-  const user=await getVerifiedUser(req);
-  if(!user) return res.status(401).send('Authentification requise.');
-  const { purchaseId } = req.params;
-  const token = req.query.token as string;
-  db = readDb();
-
-  let purchase:any;
-  if(supabaseAdmin){
-    const {data,error}=await supabaseAdmin.from('user_digital_purchases').select('*').eq('id',purchaseId).eq('user_id',user.id).maybeSingle();
-    if(error) return res.status(500).send('Téléchargement indisponible.');
-    if(data) purchase={id:data.id,userId:data.user_id,productTitle:data.product_title,format:data.format,fileName:data.file_name,fileUrl:data.file_url,downloadToken:data.download_token,purchasedAt:data.purchased_at};
-  } else {
-    purchase=db.userDigitalPurchases.find(p=>p.id===purchaseId&&p.userId===user.id);
-  }
-  if (!purchase) {
-    return res.status(404).send('Produit numérique non trouvé.');
-  }
-
-  if (purchase.downloadToken !== token) {
-    return res.status(403).send('Jeton de téléchargement invalide ou expiré.');
-  }
-
-  res.setHeader('Content-Disposition', `attachment; filename="${purchase.fileName}"`);
-  res.setHeader('Content-Type', purchase.format === 'PDF' ? 'application/pdf' : 'application/octet-stream');
-  res.send(`MALÉDIKÉ PARTY 2026 - DOCUMENT OFFICIEL ACHETÉ
-Produit: ${purchase.productTitle}
-Format: ${purchase.format}
-Titulaire: User ID ${purchase.userId}
-Date d'achat: ${purchase.purchasedAt}
-Billet sécurisé et accès VIP garantis.`);
-});
+app.get('/api/digital-products/download/:purchaseId',async(_req,res)=>res.status(410).json({error:'Téléchargement numérique suspendu: aucun fichier réel n’est disponible.'}));
 
 // ----------------- 5. SCANNER TOKENIZED ACCESS LINKS -----------------
 app.get('/api/admin/scanner-tokens', requireAdmin, async (_req, res) => {
