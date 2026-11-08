@@ -30,9 +30,8 @@ async function readApiJson<T = any>(res: Response): Promise<T> {
 function getAdminHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const user = api.getSavedUser();
   const headers: Record<string, string> = { ...extra };
-  if (user?.email) {
-    headers['x-admin-email'] = user.email.toLowerCase().trim();
-  }
+  const token = localStorage.getItem('maledike_auth_token');
+  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 
@@ -153,6 +152,7 @@ export const api = {
     const result = await readApiJson(res);
     if (result.success && result.user) {
       localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
+      if (result.accessToken) localStorage.setItem('maledike_auth_token', result.accessToken);
     }
     return result;
   },
@@ -181,6 +181,7 @@ export const api = {
 
   logoutUser(): void {
     localStorage.removeItem(STORAGE_KEYS.USER);
+    localStorage.removeItem('maledike_auth_token');
   },
 
   async updateProfile(userId: string, data: Partial<UserProfile>): Promise<{ success: boolean; user?: UserProfile }> {
