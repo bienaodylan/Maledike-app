@@ -451,41 +451,35 @@ async function callGeniusPayApi(
 }
 
 // ----------------- 1. EVENT & ASSETS -----------------
-app.get('/api/event', async (_req, res) => {
-  db=readDb();
-  let confirmedCount=db.tickets.filter(t=>t.status!=='cancelled').length;
-  if(supabaseAdmin){const {count,error}=await supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled');if(!error&&count!==null)confirmedCount=count;}
-  const isSoldOut=confirmedCount>=db.event.totalCapacity;
-  res.setHeader('Cache-Control','no-store');
-  res.json({...db.event,secretLocationAddress:db.event.isSecretLocationRevealed?db.event.secretLocationAddress:'',soldCount:confirmedCount,status:isSoldOut?'sold_out':'open',remainingCount:Math.max(0,db.event.totalCapacity-confirmedCount)});
+app.get('/api/event',async(_req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Événement indisponible'});
+  const [{data:event,error:e},{count,error:t}]=await Promise.all([supabaseAdmin.from('event_config').select('*').eq('id','maledike-party-2026').single(),supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled')]);
+  if(e||!event||t)return res.status(503).json({error:'Événement indisponible'});
+  const soldCount=count||0;return res.setHeader('Cache-Control','no-store').json({...event,id:event.id,date:event.event_date,targetDateIso:event.target_date_iso,timeRange:event.time_range,ticketPrice:event.ticket_price,totalCapacity:event.total_capacity,secretLocationAddress:event.is_secret_location_revealed?event.secret_location_address:'',isSecretLocationRevealed:event.is_secret_location_revealed,conciergeWhatsApp:event.concierge_whatsapp,conciergeDisplayPhone:event.concierge_display_phone,soldCount,status:soldCount>=event.total_capacity?'sold_out':'open',remainingCount:Math.max(0,event.total_capacity-soldCount)});
 });
-
-app.post('/api/event/update', requireAdmin, (req, res) => {
-  db = readDb();
-  const { totalCapacity, secretLocationAddress, isSecretLocationRevealed, ticketPrice } = req.body;
-  if (totalCapacity !== undefined) db.event.totalCapacity = Number(totalCapacity);
-  if (secretLocationAddress !== undefined) db.event.secretLocationAddress = secretLocationAddress;
-  if (isSecretLocationRevealed !== undefined) db.event.isSecretLocationRevealed = Boolean(isSecretLocationRevealed);
-  if (ticketPrice !== undefined) db.event.ticketPrice = Number(ticketPrice);
-  saveDb(db);
-  res.json({ success: true, event: db.event });
+app.post('/api/event/update',requireAdmin,async(req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Base indisponible'});
+  const b=req.body||{},patch:any={updated_at:new Date().toISOString()};
+  if(b.totalCapacity!==undefined){if(!Number.isInteger(b.totalCapacity)||b.totalCapacity<1||b.totalCapacity>100000)return res.status(400).json({error:'Capacité invalide'});patch.total_capacity=b.totalCapacity;}
+  if(b.ticketPrice!==undefined){if(!Number.isInteger(b.ticketPrice)||b.ticketPrice<0||b.ticketPrice>100000000)return res.status(400).json({error:'Prix invalide'});patch.ticket_price=b.ticketPrice;}
+  if(b.secretLocationAddress!==undefined){if(typeof b.secretLocationAddress!=='string'||b.secretLocationAddress.length>500)return res.status(400).json({error:'Adresse invalide'});patch.secret_location_address=b.secretLocationAddress;}
+  if(b.isSecretLocationRevealed!==undefined)patch.is_secret_location_revealed=Boolean(b.isSecretLocationRevealed);
+  const {data,error}=await supabaseAdmin.from('event_config').update(patch).eq('id','maledike-party-2026').select('*').single();if(error)return res.status(500).json({error:'Mise à jour impossible'});
+  return res.json({success:true,event:{...data,date:data.event_date,targetDateIso:data.target_date_iso,timeRange:data.time_range,ticketPrice:data.ticket_price,totalCapacity:data.total_capacity,secretLocationAddress:data.secret_location_address,isSecretLocationRevealed:data.is_secret_location_revealed,conciergeWhatsApp:data.concierge_whatsapp,conciergeDisplayPhone:data.concierge_display_phone}});
 });
-
-app.get('/api/site-assets', (_req, res) => {
-  db = readDb();
-  res.json(db.siteAssets);
+app.get('/api/site-assets',async(_req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Visuels indisponibles'});
+  const {data,error}=await supabaseAdmin.from('site_assets').select('*').eq('id','maledike-party-2026').maybeSingle();if(error)return res.status(500).json({error:'Visuels indisponibles'});
+  const x=data||{};return res.json({backgroundImageUrl:x.background_image_url||'',heroFlyerUrl:x.hero_flyer_url||'',moodImage1:x.mood_image1||'',moodImage2:x.mood_image2||'',galleryImages:x.gallery_images||[]});
 });
-
-app.post('/api/site-assets/update', requireAdmin, (req, res) => {
-  db = readDb();
-  const { backgroundImageUrl, heroFlyerUrl, moodImage1, moodImage2, galleryImages } = req.body;
-  if (backgroundImageUrl) db.siteAssets.backgroundImageUrl = backgroundImageUrl;
-  if (heroFlyerUrl) db.siteAssets.heroFlyerUrl = heroFlyerUrl;
-  if (moodImage1) db.siteAssets.moodImage1 = moodImage1;
-  if (moodImage2) db.siteAssets.moodImage2 = moodImage2;
-  if (Array.isArray(galleryImages)) db.siteAssets.galleryImages = galleryImages;
-  saveDb(db);
-  res.json({ success: true, siteAssets: db.siteAssets });
+app.post('/api/site-assets/update',requireAdmin,async(req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Base indisponible'});
+  const b=req.body||{},patch:any={id:'maledike-party-2026',updated_at:new Date().toISOString()};
+  const validUrl=(x:any)=>typeof x==='string'&&x.length<=2048&&!/^\s*(javascript:|data:|vbscript:)/i.test(x)&&(x===''||x.startsWith('/')||/^https:\/\//i.test(x));
+  for(const [key,col] of [['backgroundImageUrl','background_image_url'],['heroFlyerUrl','hero_flyer_url'],['moodImage1','mood_image1'],['moodImage2','mood_image2']] as const){if(b[key]!==undefined){if(!validUrl(b[key]))return res.status(400).json({error:'URL visuel invalide'});patch[col]=b[key];}}
+  if(b.galleryImages!==undefined){if(!Array.isArray(b.galleryImages)||b.galleryImages.length>30||b.galleryImages.some((x:any)=>!validUrl(x)))return res.status(400).json({error:'Galerie invalide'});patch.gallery_images=b.galleryImages;}
+  const {data,error}=await supabaseAdmin.from('site_assets').upsert(patch,{onConflict:'id'}).select('*').single();if(error)return res.status(500).json({error:'Enregistrement des visuels impossible'});
+  return res.json({success:true,siteAssets:{backgroundImageUrl:data.background_image_url,heroFlyerUrl:data.hero_flyer_url,moodImage1:data.mood_image1,moodImage2:data.mood_image2,galleryImages:data.gallery_images||[]}});
 });
 
 // Upload route for visual assets (hero flyer, background, mood, gallery)
