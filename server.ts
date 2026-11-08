@@ -938,7 +938,7 @@ app.get('/api/scanner/verify-token/:token', async (req, res) => {
   if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   const token=String(req.params.token||'');
   if(!/^sct_[a-f0-9]{64}$/.test(token)||!await rateLimitHit('scanner-verify:'+clientIp(req),30,60))return res.status(429).json({error:'Scanner limité ou jeton invalide'});
-  const {data:tok,error=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').eq('token',token).eq('is_active',true).maybeSingle();
+  const {data:tok,error}=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').eq('token',token).eq('is_active',true).maybeSingle();
   if(error||!tok) return res.status(401).json({success:false,error:'Accès scanner non autorisé ou révoqué'});
   db=readDb();
   return res.json({valid:true,success:true,agentName:tok.agent_name,gateName:tok.gate_name,eventTitle:db.event.title,tokenInfo:{id:tok.id,agentName:tok.agent_name,gateName:tok.gate_name,eventId:tok.event_id,isActive:tok.is_active,scanCount:tok.scan_count}});
