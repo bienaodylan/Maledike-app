@@ -946,9 +946,9 @@ app.get('/api/scanner/verify-token/:token', async (req, res) => {
 });
 
 app.post('/api/tickets/agent-scan', async (req, res) => {
-  if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   const {qrTokenHash,scannerToken}=req.body||{};
   if(typeof scannerToken!=='string'||!/^sct_[a-f0-9]{64}$/.test(scannerToken)||typeof qrTokenHash!=='string'||!qrTokenHash.trim()||qrTokenHash.length>200) return res.status(400).json({success:false,error:'Code QR ou scanner invalide'});
+  if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   if(!await rateLimitHit('agent-scan:'+clientIp(req),60,60))return res.status(429).json({success:false,error:'Trop de scans; ralentissez.'});
   let cleanInput=qrTokenHash.trim();
   try { if(cleanInput.startsWith('{')&&cleanInput.endsWith('}')){const parsed=JSON.parse(cleanInput);cleanInput=parsed.qrTokenHash||parsed.ticketNumber||cleanInput;} } catch {}
@@ -1089,6 +1089,9 @@ app.get('/api/admin/tickets',requireAdmin,async(_req,res)=>{if(!supabaseAdmin)re
 
 app.post('/api/admin/tickets/cancel',requireAdmin,async(req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Billets indisponibles'});const id=req.body?.ticketId;if(typeof id!=='string'||id.length>100)return res.status(400).json({error:'Identifiant invalide'});const {data,error}=await supabaseAdmin.from('tickets').update({status:'cancelled'}).eq('id',id).neq('status','checked_in').select('*').maybeSingle();if(error)return res.status(500).json({error:'Annulation impossible'});if(!data)return res.status(404).json({error:'Billet introuvable ou déjà scanné'});return res.json({success:true,ticket:{id:data.id,ticketNumber:data.ticket_number,status:data.status}});});
 
+// API routes must never fall through to the SPA HTML handler.
+app.use('/api',(_req,res)=>res.status(404).json({error:'Route API introuvable.'}));
+
 // ----------------- VITE MIDDLEWARE / STATIC ASSETS -----------------
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -1103,7 +1106,6 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
-    app.use('/api',(_req,res)=>res.status(404).json({error:'Route API introuvable.'}));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
