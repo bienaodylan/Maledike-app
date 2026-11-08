@@ -536,10 +536,16 @@ app.post('/api/auth/update-profile', async (req, res) => {
 
 // ----------------- 3. ORDERS & GENIUS PAY REAL PAYMENT GATEWAY -----------------
 app.post('/api/orders/create', async (req, res) => {
+  const authorization=req.headers.authorization||'';
+  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
+  if(!token||!supabaseAuth)return res.status(401).json({success:false,error:'Connexion requise pour réserver.'});
+  const {data:authData,error:authError}=await supabaseAuth.auth.getUser(token);
+  if(authError||!authData.user)return res.status(401).json({success:false,error:'Session invalide.'});
   db = readDb();
-  const { userId, buyerName, buyerEmail, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
+  const { buyerName, buyerEmail, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
+  const userId=authData.user.id;
 
-  if (!userId || !quantity || quantity < 1) {
+  if (!quantity || !Number.isInteger(Number(quantity)) || quantity < 1 || quantity > 10) {
     return res.status(400).json({ error: 'Paramètres de réservation invalides.' });
   }
 
