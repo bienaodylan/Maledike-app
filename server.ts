@@ -768,7 +768,7 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed') {
-        await fulfillOrder(order);
+        await fulfillOrder(order,String(gpData?.reference||gpData?.data?.reference||order.transactionReference),Number(gpData?.amount??gpData?.data?.amount??order.totalAmount));
         const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
         return res.json({status:'completed',order,tickets,digitalPurchases});
       } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
@@ -836,7 +836,7 @@ app.post('/api/payments/geniuspay/webhook', async (req, res) => {
     }
 
     if (status === 'success' || status === 'completed' || status === 'payment.completed') {
-      fulfillOrder(order);
+      await fulfillOrder(order,String(webhookReference),Number(webhookAmount));
       db.auditLogs.push({
         id: 'log_' + Date.now(),
         action: 'WEBHOOK_PAYMENT_CONFIRMED',
@@ -856,68 +856,12 @@ app.post('/api/payments/geniuspay/webhook', async (req, res) => {
 });
 
 // Helper: Fulfill order atomically
-async function fulfillOrder(order: any) {
-  if (order.status === 'completed') return;
-
-  order.status = 'completed';
-  order.completedAt = new Date().toISOString();
-
-  const currentTotal = db.tickets.length;
-  for (let i = 0; i < order.quantity; i++) {
-    const seq = (currentTotal + i + 1).toString().padStart(4, '0');
-    const ticketId = 'tkt_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6);
-    const ticketNumber = `MLDK-2026-${seq}`;
-
-    const rawToken = `${ticketId}:${order.userId}:${order.buyerEmail}:${Date.now()}:${db.gatewayConfig.secretKey.slice(-8)}`;
-    const qrTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    db.tickets.push({
-      id: ticketId,
-      ticketNumber,
-      orderId: order.id,
-      userId: order.userId,
-      attendeeName: order.buyerName,
-      attendeeEmail: order.buyerEmail,
-      attendeePhone: order.buyerWhatsApp,
-      eventTitle: db.event.title,
-      eventDate: db.event.date,
-      eventTime: db.event.timeRange,
-      price: order.unitPrice,
-      category: order.category || 'pass_vip',
-      categoryName: order.categoryName || 'Passe-Entrée VIP',
-      qrTokenHash,
-      status: 'confirmed',
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  if (Array.isArray(order.digitalProductIds)) {
-    for (const prodId of order.digitalProductIds) {
-      const prod = db.digitalProducts.find(p => p.id === prodId);
-      if (prod) {
-        db.userDigitalPurchases.push({
-          id: 'udp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-          orderId: order.id,
-          userId: order.userId,
-          productId: prod.id,
-          productTitle: prod.title,
-          format: prod.format,
-          fileName: prod.fileName,
-          fileUrl: prod.fileUrl,
-          downloadToken: crypto.randomBytes(16).toString('hex'),
-          purchasedAt: new Date().toISOString(),
-        });
-      }
-    }
-  }
-
-  saveDb(db);
-  if (supabaseAdmin) {
-    const tickets = db.tickets.filter(t => t.orderId === order.id).map(t => ({id:t.id,ticket_number:t.ticketNumber,order_id:t.orderId,user_id:t.userId,attendee_name:t.attendeeName,attendee_email:t.attendeeEmail,attendee_phone:t.attendeePhone,event_title:t.eventTitle,event_date:t.eventDate,event_time:t.eventTime,price:t.price,qr_token_hash:t.qrTokenHash,status:t.status,created_at:t.createdAt,checked_in_at:t.checkedInAt||null,checked_in_by_agent:t.checkedInByAgent||null}));
-    const purchases = db.userDigitalPurchases.filter(p => p.orderId === order.id).map(p => ({id:p.id,user_id:p.userId,order_id:p.orderId,product_id:p.productId,product_title:p.productTitle,price:db.digitalProducts.find(x=>x.id===p.productId)?.price||0,format:p.format,file_name:p.fileName,file_url:p.fileUrl,download_token:p.downloadToken,purchased_at:p.purchasedAt}));
-    const writes = [supabaseAdmin.from('orders').upsert(orderToRow(order),{onConflict:'id'}), ...(tickets.length?[supabaseAdmin.from('tickets').upsert(tickets,{onConflict:'id'})]:[]), ...(purchases.length?[supabaseAdmin.from('user_digital_purchases').upsert(purchases,{onConflict:'id'})]:[])];
-    const results=await Promise.all(writes); const failure=results.find(r=>r.error); if(failure?.error) throw failure.error;
-  }
+async function fulfillOrder(order:any,reference:string,amount:number){
+  if(!supabaseAdmin) throw new Error('FULFILLMENT_UNAVAILABLE');
+  const {data,error}=await supabaseAdmin.rpc('fulfill_geniuspay_order',{p_order_id:order.id,p_reference:reference,p_amount:amount});
+  if(error) throw new Error(String(error.message||'FULFILLMENT_FAILED').match(/ORDER_NOT_FOUND|AMOUNT_MISMATCH|ORDER_NOT_PENDING|ORDER_EXPIRED_NO_CAPACITY/)?.[0]||'FULFILLMENT_FAILED');
+  const fresh=await loadOrder(order.id);if(fresh)Object.assign(order,fresh);
+  return data;
 }
 
 // Secure Order Confirmation: Interdit la génération de billets sans vérification serveur
@@ -973,7 +917,7 @@ app.post('/api/orders/confirm', async (req, res) => {
   }
 
   if (isVerified) {
-    fulfillOrder(order);
+    await fulfillOrder(order,String(gpData?.reference||gpData?.data?.reference||order.transactionReference),Number(gpData?.amount??gpData?.data?.amount??order.totalAmount));
     db.auditLogs.push({
       id: 'log_conf_' + Date.now(),
       action: 'ORDER_CONFIRMED_GATEWAY_CERTIFIED',
