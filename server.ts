@@ -427,16 +427,13 @@ async function callGeniusPayApi(
 }
 
 // ----------------- 1. EVENT & ASSETS -----------------
-app.get('/api/event', (_req, res) => {
-  db = readDb();
-  const confirmedCount = db.tickets.filter(t => t.status !== 'cancelled').length;
-  const isSoldOut = confirmedCount >= db.event.totalCapacity;
-  res.json({
-    ...db.event,
-    soldCount: confirmedCount,
-    status: isSoldOut ? 'sold_out' : 'open',
-    remainingCount: Math.max(0, db.event.totalCapacity - confirmedCount),
-  });
+app.get('/api/event', async (_req, res) => {
+  db=readDb();
+  let confirmedCount=db.tickets.filter(t=>t.status!=='cancelled').length;
+  if(supabaseAdmin){const {count,error}=await supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled');if(!error&&count!==null)confirmedCount=count;}
+  const isSoldOut=confirmedCount>=db.event.totalCapacity;
+  res.setHeader('Cache-Control','no-store');
+  res.json({...db.event,secretLocationAddress:db.event.isSecretLocationRevealed?db.event.secretLocationAddress:'',soldCount:confirmedCount,status:isSoldOut?'sold_out':'open',remainingCount:Math.max(0,db.event.totalCapacity-confirmedCount)});
 });
 
 app.post('/api/event/update', requireAdmin, (req, res) => {
@@ -1046,12 +1043,13 @@ app.post('/api/orders/confirm', async (req, res) => {
 // ----------------- 4. DIGITAL PRODUCTS & ADMIN PROTECTION -----------------
 app.use('/api/admin', requireAdmin);
 
-app.get('/api/digital-products', (_req, res) => {
-  db = readDb();
-  res.json(db.digitalProducts.filter(p => p.isActive));
+app.get('/api/digital-products', async (_req, res) => {
+  db=readDb();
+  if(supabaseAdmin){const {data,error}=await supabaseAdmin.from('digital_products').select('*').eq('is_active',true);if(error)return res.status(500).json({error:'Catalogue indisponible'});return res.json((data||[]).map(p=>({id:p.id,title:p.title,description:p.description,price:p.price,format:p.format,fileName:p.file_name,fileUrl:p.file_url,isActive:p.is_active,createdAt:p.created_at}))}
+  return res.json(db.digitalProducts.filter(p=>p.isActive));
 });
 
-app.post('/api/admin/digital-products', requireAdmin, (req, res) => {
+app.post('/api/admin/digital-products', requireAdmin, async (req, res) => {
   db = readDb();
   const { title, description, price, format, fileName, fileUrl } = req.body;
   if (!title || !price || !fileName) {
@@ -1070,9 +1068,10 @@ app.post('/api/admin/digital-products', requireAdmin, (req, res) => {
     createdAt: new Date().toISOString(),
   };
 
+  if(supabaseAdmin){const {error}=await supabaseAdmin.from('digital_products').upsert({id:newProd.id,title:newProd.title,description:newProd.description,price:newProd.price,format:newProd.format,file_name:newProd.fileName,file_url:newProd.fileUrl,is_active:true,created_at:newProd.createdAt},{onConflict:'id'});if(error)return res.status(500).json({error:'Enregistrement du produit impossible'});}
   db.digitalProducts.push(newProd);
   saveDb(db);
-  res.json({ success: true, product: newProd });
+  res.json({success:true,product:newProd});
 });
 
 app.get('/api/digital-products/mine', async (req, res) => {
