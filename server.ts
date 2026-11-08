@@ -222,9 +222,9 @@ function readDb(): DatabaseSchema {
     auditLogs: [],
     gatewayConfig: {
       env: 'production',
-      publicKey: process.env.GENIUSPAY_PUBLIC_KEY || 'pk_live_1TBOO1m7rmcHRYnrCHW7VSmMgY2xUrxq',
-      secretKey: process.env.GENIUSPAY_SECRET_KEY || 'sk_live_your_geniuspay_secret_key',
-      webhookSecret: process.env.GENIUSPAY_WEBHOOK_SECRET || 'whsec_maledike_live_2026',
+      publicKey: process.env.GENIUSPAY_PUBLIC_KEY || '',
+      secretKey: process.env.GENIUSPAY_SECRET_KEY || '',
+      webhookSecret: process.env.GENIUSPAY_WEBHOOK_SECRET || '',
     },
   };
 }
