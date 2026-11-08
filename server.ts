@@ -594,7 +594,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     const fullPhone = `${countryCode || '+225'}${paymentPhone.replace(/\s+/g, '')}`;
     order.paymentPhone = fullPhone;
     
-    const txnRef = `GP_TXN_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const txnRef = order.transactionReference || `MLDK_${crypto.randomUUID()}`;
     order.transactionReference = txnRef;
     saveDb(db);
     await persistOrder(order);
@@ -626,8 +626,8 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       success_url: `${cleanHost}/?payment=success&orderId=${order.id}`,
       error_url: `${cleanHost}/?payment=failed&orderId=${order.id}`,
       metadata: {
-        orderId: order.id,
-        userId: order.userId,
+        order_id: order.id,
+        user_id: order.userId,
         quantity: order.quantity,
       },
     };
