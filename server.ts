@@ -1096,12 +1096,21 @@ app.get('/api/digital-products/mine', async (req, res) => {
   return res.json(db.userDigitalPurchases.filter(p=>p.userId===user.id));
 });
 
-app.get('/api/digital-products/download/:purchaseId', (req, res) => {
+app.get('/api/digital-products/download/:purchaseId', async (req, res) => {
+  const user=await getVerifiedUser(req);
+  if(!user) return res.status(401).send('Authentification requise.');
   const { purchaseId } = req.params;
   const token = req.query.token as string;
   db = readDb();
 
-  const purchase = db.userDigitalPurchases.find(p => p.id === purchaseId);
+  let purchase:any;
+  if(supabaseAdmin){
+    const {data,error}=await supabaseAdmin.from('user_digital_purchases').select('*').eq('id',purchaseId).eq('user_id',user.id).maybeSingle();
+    if(error) return res.status(500).send('Téléchargement indisponible.');
+    if(data) purchase={id:data.id,userId:data.user_id,productTitle:data.product_title,format:data.format,fileName:data.file_name,fileUrl:data.file_url,downloadToken:data.download_token,purchasedAt:data.purchased_at};
+  } else {
+    purchase=db.userDigitalPurchases.find(p=>p.id===purchaseId&&p.userId===user.id);
+  }
   if (!purchase) {
     return res.status(404).send('Produit numérique non trouvé.');
   }
