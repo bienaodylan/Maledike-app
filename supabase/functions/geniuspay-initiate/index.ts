@@ -32,7 +32,7 @@ serve(async (req) => {
     if (!orderId || !paymentPhone) {
       return new Response(JSON.stringify({ error: "orderId et paymentPhone requis" }), {
         status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...corsHeaders(req.headers.get('origin')), "Content-Type": "application/json" },
       });
     }
 
