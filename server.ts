@@ -26,11 +26,23 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(express.json({
-  limit: '50mb',
+  limit: '100kb',
   verify: (req: any, _res, buf) => {
     req.rawBody = buf;
   }
 }));
+app.use((req,res,next)=>{
+  if(req.method==='POST'&&req.path!=='/api/payments/geniuspay/webhook'){
+    const origin=req.get('origin');
+    if(origin&&APP_URL){try{if(new URL(origin).origin!==new URL(APP_URL).origin)return res.status(403).json({error:'Origine non autorisée'});}catch{return res.status(403).json({error:'Origine invalide'});}}
+  }
+  next();
+});
+app.use((err:any,_req:express.Request,res:express.Response,next:express.NextFunction)=>{
+  if(err?.type==='entity.too.large')return res.status(413).json({error:'Corps de requête trop volumineux (100 Ko max).'});
+  if(err instanceof SyntaxError&&'body' in err)return res.status(400).json({error:'JSON invalide.'});
+  next(err);
+});
 
 // Directory & Database Persistence
 const DATA_DIR = path.join(__dirname, 'data');
@@ -259,7 +271,15 @@ const supabaseAdmin = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_R
 const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
-const ROOT_ADMIN_EMAIL = (process.env.ROOT_ADMIN_EMAIL || 'bienaodylan428@gmail.com').toLowerCase().trim();
+const ROOT_ADMIN_EMAIL = (process.env.ROOT_ADMIN_EMAIL || '').toLowerCase().trim();
+if (!ROOT_ADMIN_EMAIL) console.error('[security] ROOT_ADMIN_EMAIL absent: founder/admin routes disabled.');
+const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+const memoryRateLimits = new Map<string, {count:number;reset:number}>();
+async function rateLimitHit(key:string,limit:number,windowSeconds:number):Promise<boolean>{
+  if(supabaseAdmin){const {data,error}=await supabaseAdmin.rpc('rate_limit_hit',{p_key:key,p_limit:limit,p_window_seconds:windowSeconds});if(!error&&typeof data==='boolean')return data;}
+  const now=Date.now(),entry=memoryRateLimits.get(key);if(!entry||entry.reset<=now){memoryRateLimits.set(key,{count:1,reset:now+windowSeconds*1000});return true;}entry.count++;return entry.count<=limit;
+}
+function clientIp(req:express.Request){return String(req.headers['x-vercel-forwarded-for']||req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0].trim();}
 
 async function getVerifiedUser(req: express.Request) {
   const authorization = req.headers.authorization || '';
@@ -270,12 +290,13 @@ async function getVerifiedUser(req: express.Request) {
 }
 
 async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if(process.env.ADMIN_REQUIRE_MFA==='true'){const t=String(req.headers.authorization||'').replace(/^Bearer\\s+/i,'').trim();try{const claim=JSON.parse(Buffer.from(t.split('.')[1]||'','base64url').toString('utf8'));if(claim.aal!=='aal2')return res.status(403).json({success:false,error:'MFA fondateur requis (aal2).'});}catch{return res.status(401).json({success:false,error:'Session MFA invalide.'});}}
   try {
     const user = await getVerifiedUser(req);
     const email=user?.email?.toLowerCase().trim();
     if(!user) return res.status(401).json({success:false,error:'Session invalide.'});
     if(!user.email_confirmed_at) return res.status(403).json({success:false,error:'Email fondateur non confirmé.'});
-    if(email!==ROOT_ADMIN_EMAIL||!supabaseAdmin) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
+    if(!ROOT_ADMIN_EMAIL||email!==ROOT_ADMIN_EMAIL||!supabaseAdmin) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
     const {data:role,error:roleError}=await supabaseAdmin.from('user_roles').select('role').eq('user_id',user.id).maybeSingle();
     if(roleError||role?.role!=='founder') return res.status(403).json({success:false,error:'Rôle fondateur requis.'});
     return next();
@@ -431,85 +452,50 @@ async function callGeniusPayApi(
 }
 
 // ----------------- 1. EVENT & ASSETS -----------------
-app.get('/api/event', async (_req, res) => {
-  db=readDb();
-  let confirmedCount=db.tickets.filter(t=>t.status!=='cancelled').length;
-  if(supabaseAdmin){const {count,error}=await supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled');if(!error&&count!==null)confirmedCount=count;}
-  const isSoldOut=confirmedCount>=db.event.totalCapacity;
-  res.setHeader('Cache-Control','no-store');
-  res.json({...db.event,secretLocationAddress:db.event.isSecretLocationRevealed?db.event.secretLocationAddress:'',soldCount:confirmedCount,status:isSoldOut?'sold_out':'open',remainingCount:Math.max(0,db.event.totalCapacity-confirmedCount)});
+app.get('/api/event',async(_req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Événement indisponible'});
+  const [{data:event,error:e},{count,error:t}]=await Promise.all([supabaseAdmin.from('event_config').select('*').eq('id','maledike-party-2026').single(),supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled')]);
+  if(e||!event||t)return res.status(503).json({error:'Événement indisponible'});
+  const soldCount=count||0;return res.setHeader('Cache-Control','no-store').json({...event,id:event.id,date:event.event_date,targetDateIso:event.target_date_iso,timeRange:event.time_range,ticketPrice:event.ticket_price,totalCapacity:event.total_capacity,secretLocationAddress:event.is_secret_location_revealed?event.secret_location_address:'',isSecretLocationRevealed:event.is_secret_location_revealed,conciergeWhatsApp:event.concierge_whatsapp,conciergeDisplayPhone:event.concierge_display_phone,soldCount,status:soldCount>=event.total_capacity?'sold_out':'open',remainingCount:Math.max(0,event.total_capacity-soldCount)});
 });
-
-app.post('/api/event/update', requireAdmin, (req, res) => {
-  db = readDb();
-  const { totalCapacity, secretLocationAddress, isSecretLocationRevealed, ticketPrice } = req.body;
-  if (totalCapacity !== undefined) db.event.totalCapacity = Number(totalCapacity);
-  if (secretLocationAddress !== undefined) db.event.secretLocationAddress = secretLocationAddress;
-  if (isSecretLocationRevealed !== undefined) db.event.isSecretLocationRevealed = Boolean(isSecretLocationRevealed);
-  if (ticketPrice !== undefined) db.event.ticketPrice = Number(ticketPrice);
-  saveDb(db);
-  res.json({ success: true, event: db.event });
+app.post('/api/event/update',requireAdmin,async(req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Base indisponible'});
+  const b=req.body||{},patch:any={updated_at:new Date().toISOString()};
+  if(b.totalCapacity!==undefined){if(!Number.isInteger(b.totalCapacity)||b.totalCapacity<1||b.totalCapacity>100000)return res.status(400).json({error:'Capacité invalide'});patch.total_capacity=b.totalCapacity;}
+  if(b.ticketPrice!==undefined){if(!Number.isInteger(b.ticketPrice)||b.ticketPrice<0||b.ticketPrice>100000000)return res.status(400).json({error:'Prix invalide'});patch.ticket_price=b.ticketPrice;}
+  if(b.secretLocationAddress!==undefined){if(typeof b.secretLocationAddress!=='string'||b.secretLocationAddress.length>500)return res.status(400).json({error:'Adresse invalide'});patch.secret_location_address=b.secretLocationAddress;}
+  if(b.isSecretLocationRevealed!==undefined)patch.is_secret_location_revealed=Boolean(b.isSecretLocationRevealed);
+  const {data,error}=await supabaseAdmin.from('event_config').update(patch).eq('id','maledike-party-2026').select('*').single();if(error)return res.status(500).json({error:'Mise à jour impossible'});
+  return res.json({success:true,event:{...data,date:data.event_date,targetDateIso:data.target_date_iso,timeRange:data.time_range,ticketPrice:data.ticket_price,totalCapacity:data.total_capacity,secretLocationAddress:data.secret_location_address,isSecretLocationRevealed:data.is_secret_location_revealed,conciergeWhatsApp:data.concierge_whatsapp,conciergeDisplayPhone:data.concierge_display_phone}});
 });
-
-app.get('/api/site-assets', (_req, res) => {
-  db = readDb();
-  res.json(db.siteAssets);
+app.get('/api/site-assets',async(_req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Visuels indisponibles'});
+  const {data,error}=await supabaseAdmin.from('site_assets').select('*').eq('id','maledike-party-2026').maybeSingle();if(error)return res.status(500).json({error:'Visuels indisponibles'});
+  const x=data||{};return res.json({backgroundImageUrl:x.background_image_url||'',heroFlyerUrl:x.hero_flyer_url||'',moodImage1:x.mood_image1||'',moodImage2:x.mood_image2||'',galleryImages:x.gallery_images||[]});
 });
-
-app.post('/api/site-assets/update', requireAdmin, (req, res) => {
-  db = readDb();
-  const { backgroundImageUrl, heroFlyerUrl, moodImage1, moodImage2, galleryImages } = req.body;
-  if (backgroundImageUrl) db.siteAssets.backgroundImageUrl = backgroundImageUrl;
-  if (heroFlyerUrl) db.siteAssets.heroFlyerUrl = heroFlyerUrl;
-  if (moodImage1) db.siteAssets.moodImage1 = moodImage1;
-  if (moodImage2) db.siteAssets.moodImage2 = moodImage2;
-  if (Array.isArray(galleryImages)) db.siteAssets.galleryImages = galleryImages;
-  saveDb(db);
-  res.json({ success: true, siteAssets: db.siteAssets });
+app.post('/api/site-assets/update',requireAdmin,async(req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Base indisponible'});
+  const b=req.body||{},patch:any={id:'maledike-party-2026',updated_at:new Date().toISOString()};
+  const validUrl=(x:any)=>typeof x==='string'&&x.length<=2048&&!/^\s*(javascript:|data:|vbscript:)/i.test(x)&&(x===''||x.startsWith('/')||/^https:\/\//i.test(x));
+  for(const [key,col] of [['backgroundImageUrl','background_image_url'],['heroFlyerUrl','hero_flyer_url'],['moodImage1','mood_image1'],['moodImage2','mood_image2']] as const){if(b[key]!==undefined){if(!validUrl(b[key]))return res.status(400).json({error:'URL visuel invalide'});patch[col]=b[key];}}
+  if(b.galleryImages!==undefined){if(!Array.isArray(b.galleryImages)||b.galleryImages.length>30||b.galleryImages.some((x:any)=>!validUrl(x)))return res.status(400).json({error:'Galerie invalide'});patch.gallery_images=b.galleryImages;}
+  const {data,error}=await supabaseAdmin.from('site_assets').upsert(patch,{onConflict:'id'}).select('*').single();if(error)return res.status(500).json({error:'Enregistrement des visuels impossible'});
+  return res.json({success:true,siteAssets:{backgroundImageUrl:data.background_image_url,heroFlyerUrl:data.hero_flyer_url,moodImage1:data.mood_image1,moodImage2:data.mood_image2,galleryImages:data.gallery_images||[]}});
 });
 
 // Upload route for visual assets (hero flyer, background, mood, gallery)
-app.post('/api/upload', requireAdmin, (req, res) => {
-  try {
-    const { fileData, fileName } = req.body;
-    if (!fileData) {
-      return res.status(400).json({ error: 'Aucun fichier transmis.' });
-    }
-
-    let buffer: Buffer;
-    let ext = '.png';
-
-    const matches = fileData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (matches && matches.length === 3) {
-      const mime = matches[1].toLowerCase();
-      buffer = Buffer.from(matches[2], 'base64');
-      if (mime.includes('jpeg') || mime.includes('jpg')) ext = '.jpg';
-      else if (mime.includes('webp')) ext = '.webp';
-      else if (mime.includes('svg')) ext = '.svg';
-      else if (mime.includes('gif')) ext = '.gif';
-      else ext = '.png';
-    } else {
-      buffer = Buffer.from(fileData, 'base64');
-      if (fileName && path.extname(fileName)) {
-        ext = path.extname(fileName).toLowerCase();
-      }
-    }
-
-    const cleanBase = (fileName || 'maledike_visual')
-      .replace(/\.[^/.]+$/, '')
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .substring(0, 30);
-    const generatedName = `${Date.now()}_${cleanBase}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, generatedName);
-
-    fs.writeFileSync(filePath, buffer);
-
-    const publicUrl = `/uploads/${generatedName}`;
-    return res.json({ success: true, url: publicUrl, fileName: generatedName });
-  } catch (err: any) {
-    console.error('Erreur upload:', err);
-    return res.status(500).json({ error: 'Erreur lors du traitement du fichier.' });
-  }
+app.post('/api/upload',requireAdmin,async(req,res)=>{
+  try{
+    if(!supabaseAdmin)return res.status(503).json({error:'Stockage indisponible'});
+    const fileData=req.body?.fileData;if(typeof fileData!=='string')return res.status(400).json({error:'Fichier absent'});
+    const m=fileData.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i);if(!m)return res.status(400).json({error:'Format autorisé: PNG, JPEG, WEBP ou GIF'});
+    const mime=m[1].toLowerCase(),buffer=Buffer.from(m[2],'base64');if(!buffer.length||buffer.length>5*1024*1024)return res.status(413).json({error:'Fichier limité à 5 Mo'});
+    const sig=buffer.subarray(0,12);let valid=mime==='image/png'?sig.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):mime==='image/jpeg'?sig[0]===0xff&&sig[1]===0xd8&&sig[2]===0xff:mime==='image/gif'?sig.subarray(0,3).toString()==='GIF':sig.subarray(0,4).toString()==='RIFF'&&sig.subarray(8,12).toString()==='WEBP';
+    if(!valid)return res.status(400).json({error:'Signature binaire incompatible avec le format'});
+    const ext=mime==='image/jpeg'?'jpg':mime.split('/')[1],name=crypto.randomBytes(18).toString('hex')+'.'+ext;
+    const {error}=await supabaseAdmin.storage.from('site-assets').upload(name,buffer,{contentType:mime,cacheControl:'31536000',upsert:false});if(error)return res.status(500).json({error:'Envoi du visuel impossible'});
+    const {data}=supabaseAdmin.storage.from('site-assets').getPublicUrl(name);return res.json({success:true,url:data.publicUrl,fileName:name});
+  }catch(e){console.error('[upload] erreur:',String((e as any)?.message||'unknown'));return res.status(500).json({error:'Erreur lors du traitement du fichier'});}
 });
 
 // ----------------- 2. AUTHENTICATION -----------------
@@ -517,11 +503,13 @@ app.post('/api/upload', requireAdmin, (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, firstName, lastName, whatsappNumber, countryCode } = req.body || {};
+    if(!await rateLimitHit('register:'+clientIp(req),5,3600))return res.status(429).json({success:false,error:'Trop de tentatives de création. Réessayez dans une heure.'});
+    if(typeof email!=='string'||email.length>200||typeof password!=='string'||password.length<10||password.length>128||typeof firstName!=='string'||firstName.length>80||typeof lastName!=='string'||lastName.length>80||typeof whatsappNumber!=='string'||whatsappNumber.length>25) return res.status(400).json({success:false,error:'Champs invalides ou mot de passe trop court (10 caractères minimum).'});
     if (!email || !password || !firstName || !lastName || !whatsappNumber) return res.status(400).json({ success:false, error:'Tous les champs sont obligatoires.' });
     if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({ success:false, error:'Service d’authentification indisponible.' });
     const normalizedEmail = String(email).trim().toLowerCase();
     const { data, error } = await supabaseAuth.auth.signUp({ email: normalizedEmail, password, options:{ data:{ first_name:String(firstName).trim(), last_name:String(lastName).trim(), whatsapp_number:String(whatsappNumber).trim(), country_code:countryCode || '+225' } } });
-    if (error) return res.status(400).json({ success:false, error:error.message });
+    if (error) return res.status(400).json({ success:false, error:error.code==='weak_password'?'Mot de passe trop faible.':'Inscription impossible. Vérifiez les informations.' });
     if (!data.user) return res.status(400).json({ success:false, error:'Création du compte non confirmée.' });
     const profile={ id:data.user.id,email:normalizedEmail,first_name:String(firstName).trim(),last_name:String(lastName).trim(),whatsapp_number:String(whatsappNumber).trim(),country_code:countryCode||'+225' };
     const { error: profileError }=await supabaseAdmin.from('profiles').upsert(profile,{onConflict:'id'});
@@ -533,9 +521,11 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
+    const normalizedEmail=typeof email==='string'?email.trim().toLowerCase():'';
+    if(!await rateLimitHit('login:ip:'+clientIp(req),10,900)||!await rateLimitHit('login:email:'+normalizedEmail,10,900))return res.status(429).json({success:false,error:'Trop de tentatives. Réessayez dans 15 minutes.'});
+    if(typeof email!=='string'||email.length>200||typeof password!=='string'||password.length>128) return res.status(400).json({success:false,error:'Identifiants invalides.'});
     if (!email || !password) return res.status(400).json({success:false,error:'Email et mot de passe requis.'});
     if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({success:false,error:'Service d’authentification indisponible.'});
-    const normalizedEmail=String(email).trim().toLowerCase();
     const {data,error}=await supabaseAuth.auth.signInWithPassword({email:normalizedEmail,password});
     if(error || !data.user) return res.status(401).json({success:false,error:'Email ou mot de passe incorrect.'});
     const {data:profile}=await supabaseAdmin.from('profiles').select('*').eq('id',data.user.id).maybeSingle();
@@ -545,113 +535,40 @@ app.post('/api/auth/login', async (req, res) => {
   } catch(e:any) { console.error('[auth/login]',e.message); return res.status(500).json({success:false,error:'Erreur serveur pendant la connexion.'}); }
 });
 
-app.post('/api/auth/update-profile', async (req, res) => {
-  const authHeader=req.headers.authorization||'';
-  const token=authHeader.startsWith('Bearer ')?authHeader.slice(7).trim():'';
-  if(!token||!supabaseAuth)return res.status(401).json({error:'Authentification requise.'});
-  const {data:authData,error:authError}=await supabaseAuth.auth.getUser(token);
-  if(authError||!authData.user)return res.status(401).json({error:'Session invalide.'});
-  if(req.body?.userId!==authData.user.id)return res.status(403).json({error:'Modification du profil interdite.'});
-  db = readDb();
-  const { userId, firstName, lastName, whatsappNumber, countryCode } = req.body;
-  const user = db.profiles.find(p => p.id === userId);
-  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+app.post('/api/auth/logout',async(req,res)=>{
+  const token=String(req.headers.authorization||'').replace(/^Bearer\\s+/i,'').trim();
+  if(!token||!supabaseAdmin)return res.status(401).json({success:false});
+  const {error}=await supabaseAdmin.auth.admin.signOut(token,'global');
+  if(error)return res.status(401).json({success:false,error:'Session non révoquée'});
+  return res.json({success:true});
+});
 
-  if (firstName) user.firstName = firstName.trim();
-  if (lastName) user.lastName = lastName.trim();
-  if (whatsappNumber) user.whatsappNumber = whatsappNumber.trim();
-  if (countryCode) user.countryCode = countryCode.trim();
-
-  saveDb(db);
-  const { passwordHash: _, ...safeUser } = user;
-  res.json({ success: true, user: safeUser });
+app.post('/api/auth/update-profile',async(req,res)=>{
+  const user=await getVerifiedUser(req);if(!user)return res.status(401).json({error:'Authentification requise.'});
+  if(!supabaseAdmin)return res.status(503).json({error:'Profil indisponible'});
+  const b=req.body||{};if(b.userId&&b.userId!==user.id)return res.status(403).json({error:'Modification interdite'});
+  const patch:any={id:user.id,email:user.email,updated_at:new Date().toISOString()};
+  for(const [k,col,max] of [['firstName','first_name',80],['lastName','last_name',80],['whatsappNumber','whatsapp_number',25],['countryCode','country_code',6]] as const){if(b[k]!==undefined){if(typeof b[k]!=='string'||b[k].length>max)return res.status(400).json({error:'Profil invalide'});patch[col]=b[k].trim();}}
+  const {data,error}=await supabaseAdmin.from('profiles').upsert(patch,{onConflict:'id'}).select('*').single();if(error)return res.status(500).json({error:'Mise à jour impossible'});
+  return res.json({success:true,user:{id:data.id,email:data.email,firstName:data.first_name,lastName:data.last_name,whatsappNumber:data.whatsapp_number,countryCode:data.country_code,role:user.email?.toLowerCase()===ROOT_ADMIN_EMAIL?'admin':'user'}});
 });
 
 // ----------------- 3. ORDERS & GENIUS PAY REAL PAYMENT GATEWAY -----------------
 app.post('/api/orders/create', async (req, res) => {
-  const authorization=req.headers.authorization||'';
-  const token=authorization.startsWith('Bearer ')?authorization.slice(7).trim():'';
-  if(!token||!supabaseAuth)return res.status(401).json({success:false,error:'Connexion requise pour réserver.'});
-  const {data:authData,error:authError}=await supabaseAuth.auth.getUser(token);
-  if(authError||!authData.user)return res.status(401).json({success:false,error:'Session invalide.'});
-  db = readDb();
-  const { buyerName, buyerEmail, buyerWhatsApp, countryCode, quantity, digitalProductIds, category } = req.body;
-  const userId=authData.user.id;
-
-  if (!quantity || !Number.isInteger(Number(quantity)) || quantity < 1 || quantity > 10) {
-    return res.status(400).json({ error: 'Paramètres de réservation invalides.' });
-  }
-
-  // Stock check from durable records; only non-expired pending orders reserve capacity.
-  let activeTickets=db.tickets.filter(t=>t.status!=='cancelled').length;
-  let pendingReservations=0;
-  if(supabaseAdmin){
-    const [ticketCount,pending]=await Promise.all([
-      supabaseAdmin.from('tickets').select('id',{count:'exact',head:true}).neq('status','cancelled'),
-      supabaseAdmin.from('orders').select('quantity').eq('status','pending').gte('reservation_expires_at',new Date().toISOString())
-    ]);
-    if(ticketCount.error||pending.error)return res.status(503).json({error:'Stock indisponible temporairement. Réessayez.'});
-    activeTickets=ticketCount.count||0;
-    pendingReservations=(pending.data||[]).reduce((sum,o)=>sum+Number(o.quantity||0),0);
-  }
-  if(activeTickets+pendingReservations+quantity>db.event.totalCapacity){
-    return res.status(400).json({error:'Désolé, les places sont épuisées pour cette quantité.'});
-  }
-
-  const SALON_PRICES: Record<string, { price: number; name: string }> = {
-    pass_vip: { price: db.event.ticketPrice || 10000, name: 'Passe-Entrée VIP' },
-    salon_twerk: { price: 50000, name: 'Salon Twerk (5 places assises)' },
-    salon_pole_dance: { price: 100000, name: 'Salon Pole Dance (10 places assises)' },
-    salon_sexy_nana: { price: 150000, name: 'Salon Sexy Nana (15 places assises)' },
-  };
-
-  const selectedCategory = category && SALON_PRICES[category] ? category : 'pass_vip';
-  const unitPrice = SALON_PRICES[selectedCategory].price;
-  const categoryName = SALON_PRICES[selectedCategory].name;
-
-  let totalAmount = unitPrice * quantity;
-  
-  if (Array.isArray(digitalProductIds) && digitalProductIds.length > 0) {
-    const products = db.digitalProducts.filter(p => digitalProductIds.includes(p.id) && p.isActive);
-    const digitalCost = products.reduce((sum, p) => sum + p.price, 0);
-    totalAmount += digitalCost;
-  }
-
-  const orderId = 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-  const reservationExpiresAt = Date.now() + 15 * 60 * 1000;
-
-  const newOrder = {
-    id: orderId,
-    userId,
-    buyerName,
-    buyerEmail,
-    buyerWhatsApp,
-    countryCode: countryCode || '+225',
-    quantity,
-    unitPrice,
-    totalAmount,
-    currency: db.event.currency,
-    category: selectedCategory,
-    categoryName,
-    paymentMethod: 'wave',
-    paymentPhone: (countryCode || '+225') + buyerWhatsApp,
-    transactionReference: 'GP_TXN_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6).toUpperCase(),
-    status: 'pending' as const,
-    reservationExpiresAt,
-    digitalProductIds: digitalProductIds || [],
-    createdAt: new Date().toISOString(),
-  };
-
-  db.orders.push(newOrder);
-  try { await persistOrder(newOrder); } catch (e: any) { console.error('Supabase order insert failed:', e.message); return res.status(500).json({ error: 'Impossible d’enregistrer la commande. Réessayez.' }); }
-  saveDb(db);
-
-  res.json({
-    success: true,
-    order: newOrder,
-    geniusPayPublicKey: db.gatewayConfig.publicKey,
-    env: db.gatewayConfig.env,
-  });
+  const user=await getVerifiedUser(req);
+  if(!user) return res.status(401).json({success:false,error:'Connexion requise pour réserver.'});
+  if(!supabaseAdmin) return res.status(503).json({success:false,error:'Réservation indisponible.'});
+  if(!await rateLimitHit('order:'+user.id,5,3600)) return res.status(429).json({success:false,error:'Trop de tentatives. Réessayez plus tard.'});
+  const {buyerName,buyerWhatsApp,countryCode,quantity,digitalProductIds,category}=req.body||{};
+  if(typeof quantity!=='number'||!Number.isInteger(quantity)||quantity<1||quantity>10) return res.status(400).json({success:false,error:'Quantité invalide (1 à 10).'});
+  if(typeof buyerName!=='string'||buyerName.trim().length<2||buyerName.length>120||typeof buyerWhatsApp!=='string'||buyerWhatsApp.trim().length<6||buyerWhatsApp.length>25) return res.status(400).json({success:false,error:'Informations acheteur invalides.'});
+  if(category!==undefined&&!['pass_vip','salon_twerk','salon_pole_dance','salon_sexy_nana'].includes(category)) return res.status(400).json({success:false,error:'Catégorie invalide.'});
+  if(countryCode!==undefined&&(typeof countryCode!=='string'||countryCode.length>6)) return res.status(400).json({success:false,error:'Indicatif invalide.'});
+  if(digitalProductIds!==undefined&&(!Array.isArray(digitalProductIds)||digitalProductIds.length>20||digitalProductIds.some((x:any)=>typeof x!=='string'||x.length>100))) return res.status(400).json({success:false,error:'Options numériques invalides.'});
+  const {data,error}=await supabaseAdmin.rpc('create_order_atomic',{p_user_id:user.id,p_category:category||'pass_vip',p_quantity:quantity,p_buyer_name:buyerName.trim(),p_buyer_email:user.email,p_buyer_whatsapp:buyerWhatsApp.trim(),p_country_code:countryCode||'+225',p_digital_ids:digitalProductIds||[]});
+  if(error){const code=String(error.message||'').match(/INVALID_QUANTITY|INVALID_CATEGORY|INVALID_BUYER|INVALID_PRODUCT|TOO_MANY_PENDING|SOLD_OUT|EVENT_NOT_FOUND/)?.[0];const status=code==='SOLD_OUT'?409:code==='TOO_MANY_PENDING'?429:code?400:503;return res.status(status).json({success:false,error:code==='SOLD_OUT'?'Places épuisées.':code==='TOO_MANY_PENDING'?'Deux réservations actives maximum.':code==='INVALID_PRODUCT'?'Option numérique invalide.':code==='INVALID_BUYER'?'Informations acheteur invalides.':code==='INVALID_QUANTITY'?'Quantité invalide.':code==='INVALID_CATEGORY'?'Catégorie invalide.':'Réservation indisponible.'});}
+  const order=data?.order||data;if(!order?.id)return res.status(503).json({success:false,error:'Réservation indisponible.'});
+  return res.json({success:true,order,geniusPayPublicKey:process.env.GENIUSPAY_PUBLIC_KEY||'',env:process.env.GENIUSPAY_ENV||'production'});
 });
 
 // Real Genius Pay Transaction Initiation (Server-to-Server) - AUTH FIX CORRIGÉ
@@ -665,11 +582,12 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
 
     const order = await loadOrder(orderId);
     if (!order || order.userId !== user.id) return res.status(404).json({ error: 'Commande introuvable.' });
+    if(order.checkoutUrl&&order.transactionReference&&order.status==='pending')return res.json({success:true,checkoutUrl:order.checkoutUrl,session:{transactionId:order.transactionReference,amount:order.totalAmount,currency:'XOF',orderId:order.id,paymentMethod:order.paymentMethod,checkoutUrl:order.checkoutUrl,gatewayConnected:true,env:process.env.GENIUSPAY_ENV||'production'}});
     if (order.status !== 'pending') return res.status(409).json({error:'Cette commande ne peut plus être payée.'});
 
     if (Date.now() > order.reservationExpiresAt && order.status === 'pending') {
       order.status = 'cancelled';
-      saveDb(db);
+      await persistOrder(order);
       return res.status(400).json({ error: 'La réservation temporaire de 15 minutes a expiré.' });
     }
 
@@ -677,15 +595,14 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     const fullPhone = `${countryCode || '+225'}${paymentPhone.replace(/\s+/g, '')}`;
     order.paymentPhone = fullPhone;
     
-    const txnRef = `GP_TXN_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const txnRef = order.transactionReference || `MLDK_${crypto.randomUUID()}`;
     order.transactionReference = txnRef;
     saveDb(db);
     await persistOrder(order);
 
-    const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
-    const hostOrigin = req.get('origin') || (req.get('referer') ? new URL(req.get('referer')!).origin : null);
-    const hostUrl = hostOrigin || process.env.APP_URL || `http://localhost:${PORT}`;
-    const cleanHost = hostUrl.replace(/\/+$/, '');
+    const gatewayUrl=(process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/,'');
+    if(!gatewayUrl||!APP_URL)return res.status(503).json({error:'Configuration GeniusPay ou APP_URL manquante'});
+    const cleanHost=APP_URL;
 
     // Map operator to GeniusPay specific method code
     const methodMap: Record<string, string> = {
@@ -709,8 +626,8 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       success_url: `${cleanHost}/?payment=success&orderId=${order.id}`,
       error_url: `${cleanHost}/?payment=failed&orderId=${order.id}`,
       metadata: {
-        orderId: order.id,
-        userId: order.userId,
+        order_id: order.id,
+        user_id: order.userId,
         quantity: order.quantity,
       },
     };
@@ -724,8 +641,8 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
     // Appel sécurisé à la passerelle avec la méthode de paiement sélectionnée
     let callRes = await callGeniusPayApi(`${gatewayUrl}/payments`, {
       method: 'POST',
-      publicKey: db.gatewayConfig.publicKey,
-      secretKey: db.gatewayConfig.secretKey,
+      publicKey: process.env.GENIUSPAY_PUBLIC_KEY||db.gatewayConfig.publicKey,
+      secretKey: process.env.GENIUSPAY_SECRET_KEY||db.gatewayConfig.secretKey,
       body: geniusPayPayload,
       timeoutMs: 15000,
       maxRetries: 2,
@@ -738,8 +655,8 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       delete geniusPayPayload.payment_method;
       const fallbackRes = await callGeniusPayApi(`${gatewayUrl}/payments`, {
         method: 'POST',
-        publicKey: db.gatewayConfig.publicKey,
-        secretKey: db.gatewayConfig.secretKey,
+        publicKey: process.env.GENIUSPAY_PUBLIC_KEY||db.gatewayConfig.publicKey,
+        secretKey: process.env.GENIUSPAY_SECRET_KEY||db.gatewayConfig.secretKey,
         body: geniusPayPayload,
         timeoutMs: 15000,
         maxRetries: 2,
@@ -759,7 +676,6 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
       return res.status(callRes.status >= 400 && callRes.status < 600 ? callRes.status : 400).json({
         success: false,
         error: friendlyError,
-        rawMessage: rawMsg,
       });
     }
 
@@ -784,8 +700,7 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
         checkoutUrl: checkoutUrl || null,
         gatewayConnected: true,
         env: db.gatewayConfig.env,
-        publicKey: db.gatewayConfig.publicKey,
-      },
+        },
     });
   } catch (err: any) {
     console.error('Erreur inattendue paiement :', err.message);
@@ -815,7 +730,8 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
   }
 
   try {
-    const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/, '');
+    if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
     const gpRes = await callGeniusPayApi(`${gatewayUrl}/payments/${order.transactionReference}`, {
       method: 'GET',
       publicKey: db.gatewayConfig.publicKey,
@@ -829,12 +745,12 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed') {
-        await fulfillOrder(order);
+        await fulfillOrder(order,String(gpData?.reference||gpData?.data?.reference||order.transactionReference),Number(gpData?.amount??gpData?.data?.amount??order.totalAmount));
         const {tickets,digitalPurchases}=await loadOrderArtifacts(orderId);
         return res.json({status:'completed',order,tickets,digitalPurchases});
       } else if (gatewayStatus === 'failed' || gatewayStatus === 'cancelled') {
         order.status = 'failed';
-        saveDb(db);
+        await persistOrder(order);
         return res.json({ status: 'failed', order });
       }
     }
@@ -848,137 +764,41 @@ app.get('/api/payments/status/:orderId', async (req, res) => {
 });
 
 // Webhook
-app.post('/api/payments/geniuspay/webhook', async (req, res) => {
-  try {
-    const sigHeader = req.headers['x-geniuspay-signature'] || req.headers['x-signature'];
-    const signature = Array.isArray(sigHeader) ? sigHeader[0] : (sigHeader as string | undefined);
-    const rawBodyBuffer = (req as any).rawBody || Buffer.from(JSON.stringify(req.body));
-    db = readDb();
-
-    const verificationSecret = db.gatewayConfig.webhookSecret;
-    if (!verificationSecret || !signature) return res.status(503).json({error:'Webhook non configuré de façon sécurisée.'});
-    if (verificationSecret && signature) {
-      const hmac = crypto.createHmac('sha256', verificationSecret);
-      const expectedSig = hmac.update(rawBodyBuffer).digest('hex');
-      if (!timingSafeEqual(expectedSig, signature.toLowerCase())) {
-        console.error('Signature webhook invalide');
-        return res.status(401).json({ error: 'Signature invalide' });
-      }
+app.post('/api/payments/geniuspay/webhook', async (req,res)=>{
+  try{
+    if(!supabaseAdmin)return res.status(503).json({error:'Webhook indisponible'});
+    const raw=(req as any).rawBody as Buffer|undefined;
+    const signature=String(req.headers['x-webhook-signature']||'');
+    const timestamp=String(req.headers['x-webhook-timestamp']||'');
+    const secret=process.env.GENIUSPAY_WEBHOOK_SECRET||'';
+    if(!raw||!secret||!/^[0-9]{10}$/.test(timestamp)||Math.abs(Date.now()/1000-Number(timestamp))>300||!/^[a-f0-9]{64}$/i.test(signature))return res.status(401).json({error:'Signature webhook invalide'});
+    const expected=crypto.createHmac('sha256',secret).update(timestamp+'.').update(raw).digest('hex');
+    if(!timingSafeEqual(expected,signature.toLowerCase()))return res.status(401).json({error:'Signature webhook invalide'});
+    const payload=req.body||{},event=String(req.headers['x-webhook-event']||payload.event||'');
+    if(!['payment.success','payment.failed','payment.cancelled'].includes(event))return res.status(200).json({received:true,ignored:true});
+    const orderId=payload.data?.metadata?.order_id||payload.data?.metadata?.orderId||payload.orderId||payload.metadata?.order_id;
+    if(typeof orderId!=='string'||!orderId)return res.status(400).json({error:'Commande absente'});
+    const order=await loadOrder(orderId);if(!order)return res.status(404).json({error:'Commande introuvable'});
+    const amount=payload.data?.amount,reference=payload.data?.reference;
+    if(event==='payment.success'){
+      if(amount===undefined||reference===undefined||String(reference).length<4)return res.status(400).json({error:'Montant ou référence absente'});
+      if(Number(amount)!==Number(order.totalAmount)||String(payload.data?.currency||'').toUpperCase()!=='XOF')return res.status(400).json({error:'Montant ou devise incohérent'});
+      if(order.transactionReference&&String(reference)!==String(order.transactionReference))return res.status(400).json({error:'Référence incohérente'});
+      try{await fulfillOrder(order,String(reference),Number(amount));}
+      catch(e:any){if(e.message==='ORDER_EXPIRED_NO_CAPACITY'){console.error('[webhook] paiement tardif sans capacité; réconciliation requise',order.id);return res.status(200).json({received:true,needsReconciliation:true});}throw e;}
+      return res.status(200).json({received:true,completed:true});
     }
-
-    const payload = req.body;
-    const orderId = payload.data?.metadata?.orderId || payload.orderId || payload.metadata?.orderId;
-    const status = payload.data?.status || payload.status || payload.event;
-
-    if (!orderId) {
-      return res.status(400).json({ error: 'orderId manquant dans le webhook' });
-    }
-
-    const order = await loadOrder(orderId);
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (!db.orders.some(o=>o.id===order.id)) db.orders.push(order);
-
-    // Reject signed events whose amount/currency/reference contradict the persisted order.
-    const webhookAmount = payload.data?.amount ?? payload.amount;
-    if (webhookAmount !== undefined && Number(webhookAmount) !== order.totalAmount) {
-      return res.status(400).json({error:'Montant du webhook incohérent.'});
-    }
-    const webhookCurrency = payload.data?.currency ?? payload.currency;
-    if (webhookCurrency && !['XOF','FCFA'].includes(String(webhookCurrency).toUpperCase())) {
-      return res.status(400).json({error:'Devise du webhook incohérente.'});
-    }
-    const webhookReference = payload.data?.reference ?? payload.reference ?? payload.data?.transaction_reference;
-    if (webhookReference && order.transactionReference && String(webhookReference) !== String(order.transactionReference)) {
-      return res.status(400).json({error:'Référence de transaction incohérente.'});
-    }
-
-    if (order.status === 'completed') {
-      return res.json({ received: true, alreadyCompleted: true });
-    }
-
-    if (status === 'success' || status === 'completed' || status === 'payment.completed') {
-      fulfillOrder(order);
-      db.auditLogs.push({
-        id: 'log_' + Date.now(),
-        action: 'WEBHOOK_PAYMENT_CONFIRMED',
-        details: { orderId, amount: order.totalAmount, reference: order.transactionReference },
-        timestamp: new Date().toISOString(),
-      });
-      saveDb(db);
-    } else if (status === 'failed' || status === 'cancelled') {
-      order.status = 'failed';
-      saveDb(db);
-    }
-
-    res.json({ received: true, status: order.status });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+    order.status='failed';await persistOrder(order);return res.status(200).json({received:true,status:'failed'});
+  }catch(e:any){console.error('[webhook] traitement échoué:',String(e?.message||'unknown'));return res.status(500).json({error:'Webhook non traité'});}
 });
 
 // Helper: Fulfill order atomically
-async function fulfillOrder(order: any) {
-  if (order.status === 'completed') return;
-
-  order.status = 'completed';
-  order.completedAt = new Date().toISOString();
-
-  const currentTotal = db.tickets.length;
-  for (let i = 0; i < order.quantity; i++) {
-    const seq = (currentTotal + i + 1).toString().padStart(4, '0');
-    const ticketId = 'tkt_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6);
-    const ticketNumber = `MLDK-2026-${seq}`;
-
-    const rawToken = `${ticketId}:${order.userId}:${order.buyerEmail}:${Date.now()}:${db.gatewayConfig.secretKey.slice(-8)}`;
-    const qrTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    db.tickets.push({
-      id: ticketId,
-      ticketNumber,
-      orderId: order.id,
-      userId: order.userId,
-      attendeeName: order.buyerName,
-      attendeeEmail: order.buyerEmail,
-      attendeePhone: order.buyerWhatsApp,
-      eventTitle: db.event.title,
-      eventDate: db.event.date,
-      eventTime: db.event.timeRange,
-      price: order.unitPrice,
-      category: order.category || 'pass_vip',
-      categoryName: order.categoryName || 'Passe-Entrée VIP',
-      qrTokenHash,
-      status: 'confirmed',
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  if (Array.isArray(order.digitalProductIds)) {
-    for (const prodId of order.digitalProductIds) {
-      const prod = db.digitalProducts.find(p => p.id === prodId);
-      if (prod) {
-        db.userDigitalPurchases.push({
-          id: 'udp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-          orderId: order.id,
-          userId: order.userId,
-          productId: prod.id,
-          productTitle: prod.title,
-          format: prod.format,
-          fileName: prod.fileName,
-          fileUrl: prod.fileUrl,
-          downloadToken: crypto.randomBytes(16).toString('hex'),
-          purchasedAt: new Date().toISOString(),
-        });
-      }
-    }
-  }
-
-  saveDb(db);
-  if (supabaseAdmin) {
-    const tickets = db.tickets.filter(t => t.orderId === order.id).map(t => ({id:t.id,ticket_number:t.ticketNumber,order_id:t.orderId,user_id:t.userId,attendee_name:t.attendeeName,attendee_email:t.attendeeEmail,attendee_phone:t.attendeePhone,event_title:t.eventTitle,event_date:t.eventDate,event_time:t.eventTime,price:t.price,qr_token_hash:t.qrTokenHash,status:t.status,created_at:t.createdAt,checked_in_at:t.checkedInAt||null,checked_in_by_agent:t.checkedInByAgent||null}));
-    const purchases = db.userDigitalPurchases.filter(p => p.orderId === order.id).map(p => ({id:p.id,user_id:p.userId,order_id:p.orderId,product_id:p.productId,product_title:p.productTitle,price:db.digitalProducts.find(x=>x.id===p.productId)?.price||0,format:p.format,file_name:p.fileName,file_url:p.fileUrl,download_token:p.downloadToken,purchased_at:p.purchasedAt}));
-    const writes = [supabaseAdmin.from('orders').upsert(orderToRow(order),{onConflict:'id'}), ...(tickets.length?[supabaseAdmin.from('tickets').upsert(tickets,{onConflict:'id'})]:[]), ...(purchases.length?[supabaseAdmin.from('user_digital_purchases').upsert(purchases,{onConflict:'id'})]:[])];
-    const results=await Promise.all(writes); const failure=results.find(r=>r.error); if(failure?.error) throw failure.error;
-  }
+async function fulfillOrder(order:any,reference:string,amount:number){
+  if(!supabaseAdmin) throw new Error('FULFILLMENT_UNAVAILABLE');
+  const {data,error}=await supabaseAdmin.rpc('fulfill_geniuspay_order',{p_order_id:order.id,p_reference:reference,p_amount:amount});
+  if(error) throw new Error(String(error.message||'FULFILLMENT_FAILED').match(/ORDER_NOT_FOUND|AMOUNT_MISMATCH|ORDER_NOT_PENDING|ORDER_EXPIRED_NO_CAPACITY/)?.[0]||'FULFILLMENT_FAILED');
+  const fresh=await loadOrder(order.id);if(fresh)Object.assign(order,fresh);
+  return data;
 }
 
 // Secure Order Confirmation: Interdit la génération de billets sans vérification serveur
@@ -1002,9 +822,10 @@ app.post('/api/orders/confirm', async (req, res) => {
   }
 
   // 2. Interrogation directe de la passerelle pour vérifier l'authenticité
-  let isVerified = false;
+  let isVerified = false;let verifiedPayment:any=null;
   try {
-    const gatewayUrl = getGeniusPayBaseUrl(db.gatewayConfig.env);
+    const gatewayUrl = (process.env.GENIUSPAY_API_BASE||'').replace(/\/+$/, '');
+    if(!gatewayUrl)return res.status(503).json({error:'GENIUSPAY_API_BASE non configurée'});
     const gpRes = await fetch(`${gatewayUrl}/payments/${order.transactionReference}`, {
       headers: {
         'X-API-Key': db.gatewayConfig.publicKey,
@@ -1015,7 +836,7 @@ app.post('/api/orders/confirm', async (req, res) => {
     });
 
     if (gpRes.ok) {
-      const gpData = await gpRes.json();
+      const gpData = await gpRes.json();verifiedPayment=gpData?.data||gpData;
       const gatewayStatus = gpData?.status || gpData?.data?.status;
 
       if (gatewayStatus === 'success' || gatewayStatus === 'completed' || gatewayStatus === 'paid') {
@@ -1034,7 +855,7 @@ app.post('/api/orders/confirm', async (req, res) => {
   }
 
   if (isVerified) {
-    fulfillOrder(order);
+    await fulfillOrder(order,String(verifiedPayment?.reference||order.transactionReference),Number(verifiedPayment?.amount??order.totalAmount));
     db.auditLogs.push({
       id: 'log_conf_' + Date.now(),
       action: 'ORDER_CONFIRMED_GATEWAY_CERTIFIED',
@@ -1064,36 +885,13 @@ app.get('/api/digital-products', async (_req, res) => {
     if(error) return res.status(500).json({error:'Catalogue indisponible'});
     return res.json((data||[]).map(p=>({
       id:p.id,title:p.title,description:p.description,price:p.price,format:p.format,
-      fileName:p.file_name,fileUrl:p.file_url,isActive:p.is_active,createdAt:p.created_at
+      fileName:p.file_name,isActive:p.is_active,createdAt:p.created_at
     })));
   }
   return res.json(db.digitalProducts.filter(p=>p.isActive));
 });
 
-app.post('/api/admin/digital-products', requireAdmin, async (req, res) => {
-  db = readDb();
-  const { title, description, price, format, fileName, fileUrl } = req.body;
-  if (!title || !price || !fileName) {
-    return res.status(400).json({ error: 'Champs requis manquants' });
-  }
-
-  const newProd = {
-    id: 'prod_' + Date.now(),
-    title: title.trim(),
-    description: (description || '').trim(),
-    price: Number(price),
-    format: format || 'PDF',
-    fileName: fileName.trim(),
-    fileUrl: fileUrl || `/assets/digital/${fileName}`,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  };
-
-  if(supabaseAdmin){const {error}=await supabaseAdmin.from('digital_products').upsert({id:newProd.id,title:newProd.title,description:newProd.description,price:newProd.price,format:newProd.format,file_name:newProd.fileName,file_url:newProd.fileUrl,is_active:true,created_at:newProd.createdAt},{onConflict:'id'});if(error)return res.status(500).json({error:'Enregistrement du produit impossible'});}
-  db.digitalProducts.push(newProd);
-  saveDb(db);
-  res.json({success:true,product:newProd});
-});
+app.post('/api/admin/digital-products',requireAdmin,(_req,res)=>res.status(410).json({error:'Vente numérique désactivée jusqu’au stockage privé et à la livraison des fichiers réels.'}));
 
 app.get('/api/digital-products/mine', async (req, res) => {
   const user=await getVerifiedUser(req);
@@ -1107,38 +905,7 @@ app.get('/api/digital-products/mine', async (req, res) => {
   return res.json(db.userDigitalPurchases.filter(p=>p.userId===user.id));
 });
 
-app.get('/api/digital-products/download/:purchaseId', async (req, res) => {
-  const user=await getVerifiedUser(req);
-  if(!user) return res.status(401).send('Authentification requise.');
-  const { purchaseId } = req.params;
-  const token = req.query.token as string;
-  db = readDb();
-
-  let purchase:any;
-  if(supabaseAdmin){
-    const {data,error}=await supabaseAdmin.from('user_digital_purchases').select('*').eq('id',purchaseId).eq('user_id',user.id).maybeSingle();
-    if(error) return res.status(500).send('Téléchargement indisponible.');
-    if(data) purchase={id:data.id,userId:data.user_id,productTitle:data.product_title,format:data.format,fileName:data.file_name,fileUrl:data.file_url,downloadToken:data.download_token,purchasedAt:data.purchased_at};
-  } else {
-    purchase=db.userDigitalPurchases.find(p=>p.id===purchaseId&&p.userId===user.id);
-  }
-  if (!purchase) {
-    return res.status(404).send('Produit numérique non trouvé.');
-  }
-
-  if (purchase.downloadToken !== token) {
-    return res.status(403).send('Jeton de téléchargement invalide ou expiré.');
-  }
-
-  res.setHeader('Content-Disposition', `attachment; filename="${purchase.fileName}"`);
-  res.setHeader('Content-Type', purchase.format === 'PDF' ? 'application/pdf' : 'application/octet-stream');
-  res.send(`MALÉDIKÉ PARTY 2026 - DOCUMENT OFFICIEL ACHETÉ
-Produit: ${purchase.productTitle}
-Format: ${purchase.format}
-Titulaire: User ID ${purchase.userId}
-Date d'achat: ${purchase.purchasedAt}
-Billet sécurisé et accès VIP garantis.`);
-});
+app.get('/api/digital-products/download/:purchaseId',async(_req,res)=>res.status(410).json({error:'Téléchargement numérique suspendu: aucun fichier réel n’est disponible.'}));
 
 // ----------------- 5. SCANNER TOKENIZED ACCESS LINKS -----------------
 app.get('/api/admin/scanner-tokens', requireAdmin, async (_req, res) => {
@@ -1171,6 +938,7 @@ app.post('/api/admin/scanner-tokens/revoke', requireAdmin, async (req, res) => {
 app.get('/api/scanner/verify-token/:token', async (req, res) => {
   if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   const token=String(req.params.token||'');
+  if(!/^sct_[a-f0-9]{64}$/.test(token)||!await rateLimitHit('scanner-verify:'+clientIp(req),30,60))return res.status(429).json({error:'Scanner limité ou jeton invalide'});
   const {data:tok,error}=await supabaseAdmin.from('scanner_tokens').select('id,agent_name,gate_name,event_id,is_active,created_at,last_used_at,scan_count').eq('token',token).eq('is_active',true).maybeSingle();
   if(error||!tok) return res.status(401).json({success:false,error:'Accès scanner non autorisé ou révoqué'});
   db=readDb();
@@ -1178,9 +946,10 @@ app.get('/api/scanner/verify-token/:token', async (req, res) => {
 });
 
 app.post('/api/tickets/agent-scan', async (req, res) => {
-  if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
   const {qrTokenHash,scannerToken}=req.body||{};
-  if(typeof scannerToken!=='string'||typeof qrTokenHash!=='string'||!qrTokenHash.trim()) return res.status(400).json({success:false,error:'Code QR ou scanner manquant'});
+  if(typeof scannerToken!=='string'||!/^sct_[a-f0-9]{64}$/.test(scannerToken)||typeof qrTokenHash!=='string'||!qrTokenHash.trim()||qrTokenHash.length>200) return res.status(400).json({success:false,error:'Code QR ou scanner invalide'});
+  if(!supabaseAdmin) return res.status(503).json({error:'Scanner indisponible'});
+  if(!await rateLimitHit('agent-scan:'+clientIp(req),60,60))return res.status(429).json({success:false,error:'Trop de scans; ralentissez.'});
   let cleanInput=qrTokenHash.trim();
   try { if(cleanInput.startsWith('{')&&cleanInput.endsWith('}')){const parsed=JSON.parse(cleanInput);cleanInput=parsed.qrTokenHash||parsed.ticketNumber||cleanInput;} } catch {}
   const {data,error}=await supabaseAdmin.rpc('maledike_agent_scan',{p_code:cleanInput,p_scanner_token:scannerToken});
@@ -1192,6 +961,7 @@ app.post('/api/tickets/agent-scan', async (req, res) => {
 app.get('/api/scanner/history/:token', async (req, res) => {
   if(!supabaseAdmin) return res.status(503).json({error:'Historique indisponible'});
   const token=String(req.params.token||'');
+  if(!/^sct_[a-f0-9]{64}$/.test(token)||!await rateLimitHit('scanner-history:'+clientIp(req),10,60))return res.status(429).json({error:'Historique limité ou jeton invalide'});
   const {data,error}=await supabaseAdmin.rpc('maledike_scanner_history',{p_scanner_token:token});
   if(error) return res.status(403).json({error:'Token non autorisé ou historique indisponible'});
   res.setHeader('Cache-Control','no-store');
@@ -1199,73 +969,18 @@ app.get('/api/scanner/history/:token', async (req, res) => {
 });
 
 // ----------------- 6. ANALYTICS -----------------
-app.get('/api/admin/analytics', requireAdmin, (_req, res) => {
-  db = readDb();
-  const completedOrders = db.orders.filter(o => o.status === 'completed');
-  const pendingOrders = db.orders.filter(o => o.status === 'pending');
-  const failedOrders = db.orders.filter(o => o.status === 'failed' || o.status === 'cancelled');
-
-  const totalRevenue = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
-  const totalTicketsSold = db.tickets.filter(t => t.status !== 'cancelled').length;
-  const checkedInCount = db.tickets.filter(t => t.status === 'checked_in').length;
-
-  const hourlyMap: Record<string, { amount: number; count: number }> = {};
-  for (let h = 0; h < 24; h++) {
-    const label = `${String(h).padStart(2, '0')}h`;
-    hourlyMap[label] = { amount: 0, count: 0 };
-  }
-
-  for (const o of completedOrders) {
-    const d = new Date(o.completedAt || o.createdAt);
-    const hourKey = `${String(d.getHours()).padStart(2, '0')}h`;
-    if (hourlyMap[hourKey]) {
-      hourlyMap[hourKey].amount += o.totalAmount;
-      hourlyMap[hourKey].count += 1;
-    }
-  }
-
-  const hourlySales = Object.entries(hourlyMap).map(([hour, data]) => ({
-    hour,
-    amount: data.amount,
-    count: data.count,
-  }));
-
-  const operatorMap: Record<string, { count: number; amount: number; color: string }> = {
-    wave: { count: 0, amount: 0, color: '#1DC4FF' },
-    orange_money: { count: 0, amount: 0, color: '#FF7900' },
-    mtn_momo: { count: 0, amount: 0, color: '#FFCC00' },
-    moov_money: { count: 0, amount: 0, color: '#005CA9' },
-    djamo_card: { count: 0, amount: 0, color: '#3A10E5' },
-  };
-
-  for (const o of completedOrders) {
-    const op = o.paymentMethod || 'wave';
-    if (operatorMap[op]) {
-      operatorMap[op].count += 1;
-      operatorMap[op].amount += o.totalAmount;
-    }
-  }
-
-  const operatorData = Object.entries(operatorMap).map(([name, data]) => ({
-    name: name === 'wave' ? 'Wave' : name === 'orange_money' ? 'Orange Money' : name === 'mtn_momo' ? 'MTN MoMo' : name === 'moov_money' ? 'Moov Money' : 'Djamo / CB',
-    count: data.count,
-    amount: data.amount,
-    color: data.color,
-  }));
-
-  res.json({
-    totalRevenueFcfa: totalRevenue,
-    totalSalesCount: completedOrders.length,
-    completedOrdersCount: completedOrders.length,
-    pendingOrdersCount: pendingOrders.length,
-    failedOrdersCount: failedOrders.length,
-    totalTicketsSold,
-    remainingStock: Math.max(0, db.event.totalCapacity - totalTicketsSold),
-    checkedInCount,
-    hourlySales,
-    operatorData,
-    recentOrders: completedOrders.slice(-5).reverse(),
-  });
+app.get('/api/admin/analytics',requireAdmin,async(_req,res)=>{
+  if(!supabaseAdmin)return res.status(503).json({error:'Analytics indisponibles'});
+  const [o,t,e]=await Promise.all([supabaseAdmin.from('orders').select('*'),supabaseAdmin.from('tickets').select('*'),supabaseAdmin.from('event_config').select('total_capacity').eq('id','maledike-party-2026').single()]);
+  if(o.error||t.error||e.error)return res.status(503).json({error:'Analytics indisponibles'});
+  const orders=(o.data||[]).map(rowToOrder),tickets=t.data||[],completed=orders.filter(x=>x.status==='completed'),pending=orders.filter(x=>x.status==='pending'),failed=orders.filter(x=>['failed','cancelled'].includes(x.status));
+  const revenue=completed.reduce((a,x)=>a+Number(x.totalAmount||0),0),sold=tickets.filter(x=>x.status!=='cancelled').length,checked=tickets.filter(x=>x.status==='checked_in').length;
+  const hours:Record<string,{amount:number,count:number}>={};for(let h=0;h<24;h++)hours[String(h).padStart(2,'0')+'h']={amount:0,count:0};
+  for(const x of completed){const h=new Date(x.completedAt||x.createdAt).getHours().toString().padStart(2,'0')+'h';if(hours[h]){hours[h].amount+=Number(x.totalAmount||0);hours[h].count++;}}
+  const colors:any={wave:'#1DC4FF',orange_money:'#FF7900',mtn_momo:'#FFCC00',moov_money:'#005CA9',djamo_card:'#3A10E5'},ops:any={};
+  for(const [k,color]of Object.entries(colors))ops[k]={count:0,amount:0,color};
+  for(const x of completed){const k=x.paymentMethod||'wave';if(ops[k]){ops[k].count++;ops[k].amount+=Number(x.totalAmount||0);}}
+  return res.json({totalRevenueFcfa:revenue,totalSalesCount:completed.length,completedOrdersCount:completed.length,pendingOrdersCount:pending.length,failedOrdersCount:failed.length,totalTicketsSold:sold,remainingStock:Math.max(0,e.data.total_capacity-sold),checkedInCount:checked,hourlySales:Object.entries(hours).map(([hour,v])=>({hour,...v})),operatorData:Object.entries(ops).map(([name,v]:any)=>({name:name==='wave'?'Wave':name==='orange_money'?'Orange Money':name==='mtn_momo'?'MTN MoMo':name==='moov_money'?'Moov Money':'Djamo / CB',...v})),recentOrders:completed.slice(-5).reverse()});
 });
 
 // ----------------- 7. GATEWAY CONFIG & TEST CLEANUP -----------------
@@ -1280,7 +995,8 @@ app.get('/api/admin/gateway-config', requireAdmin, (_req, res) => {
   });
 });
 
-app.post('/api/admin/gateway-config', requireAdmin, (req, res) => {
+app.post('/api/admin/gateway-config', requireAdmin, (_req, res) => res.status(410).json({error:'Configuration des clés désactivée. Utilisez exclusivement les variables d’environnement Vercel.'}));
+app.post('/api/admin/gateway-config-legacy', requireAdmin, (req, res) => {
   db = readDb();
   const { env, publicKey, secretKey, webhookSecret } = req.body;
   if (env && (env === 'sandbox' || env === 'production')) {
@@ -1302,7 +1018,8 @@ app.post('/api/admin/gateway-config', requireAdmin, (req, res) => {
   });
 });
 
-app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => {
+app.post('/api/admin/purge-test-data', requireAdmin, (_req, res) => res.status(410).json({error:'Purge destructive désactivée en production.'}));
+app.post('/api/admin/purge-test-data-legacy', requireAdmin, (_req, res) => {
   db = readDb();
   const beforeCount = db.tickets.length;
   db.orders = [];
@@ -1366,25 +1083,14 @@ app.post('/api/tickets/scan', (_req, res) => {
   */
 });
 
-app.get('/api/admin/orders', requireAdmin, (_req, res) => {
-  db = readDb();
-  res.json(db.orders.slice().reverse());
-});
+app.get('/api/admin/orders',requireAdmin,async(_req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Commandes indisponibles'});const {data,error}=await supabaseAdmin.from('orders').select('*').order('created_at',{ascending:false}).limit(500);if(error)return res.status(500).json({error:'Commandes indisponibles'});return res.json((data||[]).map(rowToOrder));});
 
-app.get('/api/admin/tickets', requireAdmin, (_req, res) => {
-  db = readDb();
-  res.json(db.tickets.slice().reverse());
-});
+app.get('/api/admin/tickets',requireAdmin,async(_req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Billets indisponibles'});const {data,error}=await supabaseAdmin.from('tickets').select('*').order('created_at',{ascending:false}).limit(1000);if(error)return res.status(500).json({error:'Billets indisponibles'});return res.json((data||[]).map(t=>({id:t.id,ticketNumber:t.ticket_number,orderId:t.order_id,userId:t.user_id,attendeeName:t.attendee_name,attendeeEmail:t.attendee_email,attendeePhone:t.attendee_phone,eventTitle:t.event_title,eventDate:t.event_date,eventTime:t.event_time,price:t.price,category:t.category,categoryName:t.category_name,qrTokenHash:t.qr_token_hash,status:t.status,createdAt:t.created_at,checkedInAt:t.checked_in_at,checkedInByAgent:t.checked_in_by_agent})));});
 
-app.post('/api/admin/tickets/cancel', requireAdmin, (req, res) => {
-  const { ticketId } = req.body;
-  db = readDb();
-  const ticket = db.tickets.find(t => t.id === ticketId);
-  if (!ticket) return res.status(404).json({ error: 'Ticket non trouvé' });
-  ticket.status = 'cancelled';
-  saveDb(db);
-  res.json({ success: true, ticket });
-});
+app.post('/api/admin/tickets/cancel',requireAdmin,async(req,res)=>{if(!supabaseAdmin)return res.status(503).json({error:'Billets indisponibles'});const id=req.body?.ticketId;if(typeof id!=='string'||id.length>100)return res.status(400).json({error:'Identifiant invalide'});const {data,error}=await supabaseAdmin.from('tickets').update({status:'cancelled'}).eq('id',id).neq('status','checked_in').select('*').maybeSingle();if(error)return res.status(500).json({error:'Annulation impossible'});if(!data)return res.status(404).json({error:'Billet introuvable ou déjà scanné'});return res.json({success:true,ticket:{id:data.id,ticketNumber:data.ticket_number,status:data.status}});});
+
+// API routes must never fall through to the SPA HTML handler.
+app.use('/api',(_req,res)=>res.status(404).json({error:'Route API introuvable.'}));
 
 // ----------------- VITE MIDDLEWARE / STATIC ASSETS -----------------
 async function startServer() {

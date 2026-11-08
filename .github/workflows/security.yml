@@ -1,0 +1,44 @@
+name: Security checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --package-lock=false --ignore-scripts
+      - run: npm install --package-lock-only --ignore-scripts
+      - run: npm audit --audit-level=high
+      - run: npm run build
+      - run: npm run lint
+      - run: npm run dev > /tmp/maledike-server.log 2>&1 &
+      - run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/admin/orders || true)
+            [ "$code" = "401" ] && exit 0
+            sleep 2
+          done
+          cat /tmp/maledike-server.log
+          exit 1
+      - run: node tests/security-smoke.mjs
+        env:
+          SECURITY_TEST_BASE_URL: http://127.0.0.1:3000
