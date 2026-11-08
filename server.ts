@@ -259,14 +259,20 @@ const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   : null;
 const ROOT_ADMIN_EMAIL = 'bienaodylan428@gmail.com';
 
+async function getVerifiedUser(req: express.Request) {
+  const authorization = req.headers.authorization || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  if (!token || !supabaseAuth) return null;
+  const { data, error } = await supabaseAuth.auth.getUser(token);
+  return error ? null : data.user || null;
+}
+
 async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
-    const authorization = req.headers.authorization || '';
-    const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
-    if (!token || !supabaseAuth) return res.status(401).json({success:false,error:'Authentification requise.'});
-    const {data,error}=await supabaseAuth.auth.getUser(token);
-    const email=data.user?.email?.toLowerCase().trim();
-    if(error||!data.user||email!==ROOT_ADMIN_EMAIL) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
+    const user = await getVerifiedUser(req);
+    const email=user?.email?.toLowerCase().trim();
+    if(!user) return res.status(401).json({success:false,error:'Session invalide.'});
+    if(email!==ROOT_ADMIN_EMAIL) return res.status(403).json({success:false,error:'Accès réservé au fondateur.'});
     return next();
   } catch { return res.status(401).json({success:false,error:'Session invalide.'}); }
 }
@@ -626,13 +632,15 @@ app.post('/api/orders/create', async (req, res) => {
 // Real Genius Pay Transaction Initiation (Server-to-Server) - AUTH FIX CORRIGÉ
 app.post('/api/payments/geniuspay/initiate', async (req, res) => {
   try {
-    const { orderId, paymentMethod, paymentPhone, countryCode } = req.body;
+    const user = await getVerifiedUser(req);
+    if (!user) return res.status(401).json({success:false,error:'Authentification requise.'});
+    const { orderId, paymentMethod, paymentPhone, countryCode } = req.body || {};
+    if (!['wave','orange_money','mtn_momo','moov_money','djamo_card'].includes(paymentMethod) || typeof paymentPhone !== 'string' || paymentPhone.replace(/\D/g,'').length < 8 || paymentPhone.replace(/\D/g,'').length > 15) return res.status(400).json({error:'Moyen de paiement invalide.'});
     db = readDb();
 
     const order = await loadOrder(orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Commande introuvable.' });
-    }
+    if (!order || order.userId !== user.id) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (order.status !== 'pending') return res.status(409).json({error:'Cette commande ne peut plus être payée.'});
 
     if (Date.now() > order.reservationExpiresAt && order.status === 'pending') {
       order.status = 'cancelled';
@@ -764,14 +772,17 @@ app.post('/api/payments/geniuspay/initiate', async (req, res) => {
 
 // Real Status Checker
 app.get('/api/payments/status/:orderId', async (req, res) => {
+  const user = await getVerifiedUser(req);
+  if (!user) return res.status(401).json({error:'Authentification requise.'});
   const { orderId } = req.params;
   db = readDb();
   const order = await loadOrder(orderId);
 
-  if (!order) {
+  if (!order || order.userId !== user.id) {
     return res.status(404).json({ error: 'Commande introuvable' });
   }
 
+  res.setHeader('Cache-Control','no-store');
   if (order.status === 'completed') {
     const tickets = db.tickets.filter(t => t.orderId === orderId);
     const digitalPurchases = db.userDigitalPurchases.filter(p => p.orderId === orderId);
@@ -830,7 +841,8 @@ app.post('/api/payments/geniuspay/webhook', (req, res) => {
     const rawBodyBuffer = (req as any).rawBody || Buffer.from(JSON.stringify(req.body));
     db = readDb();
 
-    const verificationSecret = db.gatewayConfig.webhookSecret || db.gatewayConfig.secretKey;
+    const verificationSecret = db.gatewayConfig.webhookSecret;
+    if (!verificationSecret || !signature) return res.status(503).json({error:'Webhook non configuré de façon sécurisée.'});
     if (verificationSecret && signature) {
       const hmac = crypto.createHmac('sha256', verificationSecret);
       const expectedSig = hmac.update(rawBodyBuffer).digest('hex');
@@ -938,9 +950,11 @@ function fulfillOrder(order: any) {
 
 // Secure Order Confirmation: Interdit la génération de billets sans vérification serveur
 app.post('/api/orders/confirm', async (req, res) => {
-  const { orderId } = req.body;
+  const user = await getVerifiedUser(req);
+  if (!user) return res.status(401).json({success:false,error:'Authentification requise.'});
+  const { orderId } = req.body || {};
   db = readDb();
-  const order = db.orders.find(o => o.id === orderId);
+  const order = db.orders.find(o => o.id === orderId && o.userId === user.id);
 
   if (!order) {
     return res.status(404).json({ success: false, error: 'Commande introuvable' });
@@ -1268,7 +1282,7 @@ app.get('/api/scanner/history/:token', (req, res) => {
   }
 
   const logs = (db.auditLogs || [])
-    .filter(l => l.action?.includes('SCAN') || l.action === 'TICKET_CHECKED_IN')
+    .filter(l => (l.action?.includes('SCAN') || l.action === 'TICKET_CHECKED_IN') && l.details?.agent === tok.agentName && l.details?.gate === tok.gateName)
     .slice(-30)
     .reverse();
 
@@ -1407,7 +1421,10 @@ app.get('/api/tickets/mine', async (req, res) => {
   return res.json({tickets:myTickets,secretLocationRevealed:db.event.isSecretLocationRevealed,secretLocationAddress:db.event.isSecretLocationRevealed?db.event.secretLocationAddress:null});
 });
 
-app.post('/api/tickets/scan', (req, res) => {
+app.post('/api/tickets/scan', (_req, res) => {
+  // A public QR endpoint must never perform check-in; use tokenized agent scanning.
+  return res.status(403).json({success:false,error:'Scanner autorisé requis. Utilisez le terminal agent.'});
+  /*
   const { qrTokenHash } = req.body;
   if (!qrTokenHash) return res.status(400).json({ success: false, message: 'Code QR non fourni.' });
 
@@ -1437,6 +1454,7 @@ app.post('/api/tickets/scan', (req, res) => {
   saveDb(db);
 
   return res.json({ success: true, message: 'ACCÈS VALIDÉ ! Passe VIP autorisé.', ticket });
+  */
 });
 
 app.get('/api/admin/orders', requireAdmin, (_req, res) => {
