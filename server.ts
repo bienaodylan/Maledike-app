@@ -31,6 +31,18 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+app.use((req,res,next)=>{
+  if(req.method==='POST'&&req.path!=='/api/payments/geniuspay/webhook'){
+    const origin=req.get('origin');
+    if(origin&&APP_URL){try{if(new URL(origin).origin!==new URL(APP_URL).origin)return res.status(403).json({error:'Origine non autorisée'});}catch{return res.status(403).json({error:'Origine invalide'});}}
+  }
+  next();
+});
+app.use((err:any,_req:express.Request,res:express.Response,next:express.NextFunction)=>{
+  if(err?.type==='entity.too.large')return res.status(413).json({error:'Corps de requête trop volumineux (100 Ko max).'});
+  if(err instanceof SyntaxError&&'body' in err)return res.status(400).json({error:'JSON invalide.'});
+  next(err);
+});
 
 // Directory & Database Persistence
 const DATA_DIR = path.join(__dirname, 'data');
@@ -525,11 +537,13 @@ app.post('/api/upload', requireAdmin, (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, firstName, lastName, whatsappNumber, countryCode } = req.body || {};
+    if(!await rateLimitHit('register:'+clientIp(req),5,3600))return res.status(429).json({success:false,error:'Trop de tentatives de création. Réessayez dans une heure.'});
+    if(typeof email!=='string'||email.length>200||typeof password!=='string'||password.length<10||password.length>128||typeof firstName!=='string'||firstName.length>80||typeof lastName!=='string'||lastName.length>80||typeof whatsappNumber!=='string'||whatsappNumber.length>25) return res.status(400).json({success:false,error:'Champs invalides ou mot de passe trop court (10 caractères minimum).'});
     if (!email || !password || !firstName || !lastName || !whatsappNumber) return res.status(400).json({ success:false, error:'Tous les champs sont obligatoires.' });
     if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({ success:false, error:'Service d’authentification indisponible.' });
     const normalizedEmail = String(email).trim().toLowerCase();
     const { data, error } = await supabaseAuth.auth.signUp({ email: normalizedEmail, password, options:{ data:{ first_name:String(firstName).trim(), last_name:String(lastName).trim(), whatsapp_number:String(whatsappNumber).trim(), country_code:countryCode || '+225' } } });
-    if (error) return res.status(400).json({ success:false, error:error.message });
+    if (error) return res.status(400).json({ success:false, error:error.code==='weak_password'?'Mot de passe trop faible.':'Inscription impossible. Vérifiez les informations.' });
     if (!data.user) return res.status(400).json({ success:false, error:'Création du compte non confirmée.' });
     const profile={ id:data.user.id,email:normalizedEmail,first_name:String(firstName).trim(),last_name:String(lastName).trim(),whatsapp_number:String(whatsappNumber).trim(),country_code:countryCode||'+225' };
     const { error: profileError }=await supabaseAdmin.from('profiles').upsert(profile,{onConflict:'id'});
@@ -541,9 +555,11 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
+    const normalizedEmail=typeof email==='string'?email.trim().toLowerCase():'';
+    if(!await rateLimitHit('login:ip:'+clientIp(req),10,900)||!await rateLimitHit('login:email:'+normalizedEmail,10,900))return res.status(429).json({success:false,error:'Trop de tentatives. Réessayez dans 15 minutes.'});
+    if(typeof email!=='string'||email.length>200||typeof password!=='string'||password.length>128) return res.status(400).json({success:false,error:'Identifiants invalides.'});
     if (!email || !password) return res.status(400).json({success:false,error:'Email et mot de passe requis.'});
     if (!supabaseAuth || !supabaseAdmin) return res.status(503).json({success:false,error:'Service d’authentification indisponible.'});
-    const normalizedEmail=String(email).trim().toLowerCase();
     const {data,error}=await supabaseAuth.auth.signInWithPassword({email:normalizedEmail,password});
     if(error || !data.user) return res.status(401).json({success:false,error:'Email ou mot de passe incorrect.'});
     const {data:profile}=await supabaseAdmin.from('profiles').select('*').eq('id',data.user.id).maybeSingle();
@@ -1244,6 +1260,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
+    app.use('/api',(_req,res)=>res.status(404).json({error:'Route API introuvable.'}));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
